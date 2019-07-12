@@ -348,7 +348,7 @@ typedef struct _YORI_FILE_INFO {
  added value.
  */
 #define YoriLibAddToPointer(PTR, OFFSET) \
-    (((PUCHAR)(PTR)) + (OFFSET))
+    (PVOID)(((PUCHAR)(PTR)) + (OFFSET))
 
 
 #ifdef _M_IX86
@@ -397,6 +397,13 @@ YORI_BUILTIN_UNLOAD_NOTIFY();
  unloaded from the shell or if the shell is exiting.
  */
 typedef YORI_BUILTIN_UNLOAD_NOTIFY *PYORI_BUILTIN_UNLOAD_NOTIFY;
+
+// *** BUILTIN.C ***
+
+BOOL
+YoriLibBuiltinSetEnvironmentStrings(
+    __in PYORI_STRING NewEnvironment
+    );
 
 // *** CABINET.C ***
 
@@ -488,8 +495,9 @@ YoriLibCopyText(
     );
 
 BOOL
-YoriLibCopyTextAndHtml(
+YoriLibCopyTextRtfAndHtml(
     __in PYORI_STRING TextVersion,
+    __in PYORI_STRING RtfVersion,
     __in PYORI_STRING HtmlVersion
     );
 
@@ -548,7 +556,7 @@ YoriLibExpandCommandVariables(
 // *** COLOR.C ***
 
 
-extern YORILIB_ATTRIBUTE_COLOR_STRING ColorString[];
+extern YORILIB_ATTRIBUTE_COLOR_STRING YoriLibColorStringTable[];
 
 /**
  A flag defining inversion in the Ctrl member of YORILIB_COLOR_ATTRIBUTES.
@@ -585,6 +593,17 @@ extern YORILIB_ATTRIBUTE_COLOR_STRING ColorString[];
 #define YORILIB_ATTRCTRL_WINDOW_FG        0x20
 
 /**
+ A flag indicating that underline should be enabled.
+ */
+#define YORILIB_ATTRCTRL_UNDERLINE        0x40
+
+/**
+ If any of the flags are set here (or if a color is specified) no further
+ processing is performed to find color information.
+ */
+#define YORILIB_ATTRCTRL_TERMINATE_MASK   (YORILIB_ATTRCTRL_HIDE)
+
+/**
  A mask that represents all possible colors in the Win32Attr member
  of YORILIB_COLOR_ATTRIBUTES, consisting of both a background and a foreground.
  */
@@ -598,6 +617,11 @@ extern YORILIB_ATTRIBUTE_COLOR_STRING ColorString[];
 
 YORILIB_COLOR_ATTRIBUTES
 YoriLibAttributeFromString(
+    __in PYORI_STRING String
+    );
+
+YORILIB_COLOR_ATTRIBUTES
+YoriLibAttributeFromLiteralString(
     __in LPCTSTR String
     );
 
@@ -626,6 +650,21 @@ YoriLibAreColorsIdentical(
     __in YORILIB_COLOR_ATTRIBUTES Color2
     );
 
+LPCSTR
+YoriLibGetDefaultFileColorString();
+
+BOOL
+YoriLibLoadCombinedFileColorString(
+    __in_opt PYORI_STRING Custom,
+    __out PYORI_STRING Combined
+    );
+
+BOOL
+YoriLibGetMetadataColor(
+    __in PYORI_STRING RequestedAttributeCodeString,
+    __out PYORILIB_COLOR_ATTRIBUTES Color
+    );
+
 // *** CSHOT.C ***
 
 BOOL
@@ -644,6 +683,19 @@ YoriLibGenerateVtStringFromConsoleBuffers(
     );
 
 // *** CVTHTML.C ***
+
+extern DWORD YoriLibDefaultColorTable[];
+
+BOOL
+YoriLibCaptureConsoleFont(
+    __out PYORI_CONSOLE_FONT_INFOEX FontInfo
+    );
+
+BOOL
+YoriLibCaptureConsoleColorTable(
+    __out PDWORD * ColorTable,
+    __out_opt PWORD CurrentAttributes
+    );
 
 BOOL
 YoriLibHtmlGenerateInitialString(
@@ -680,7 +732,44 @@ BOOL
 YoriLibHtmlConvertToHtmlFromVt(
     __in PYORI_STRING VtText,
     __inout PYORI_STRING HtmlText,
+    __in_opt PDWORD ColorTable,
     __in DWORD HtmlVersion
+    );
+
+// *** CVTRTF.C ***
+
+BOOL
+YoriLibRtfGenerateInitialString(
+    __inout PYORI_STRING TextString,
+    __in_opt PDWORD ColorTable
+    );
+
+BOOL
+YoriLibRtfGenerateEndString(
+    __inout PYORI_STRING TextString
+    );
+
+BOOL
+YoriLibRtfGenerateTextString(
+    __inout PYORI_STRING TextString,
+    __out PDWORD BufferSizeNeeded,
+    __in LPTSTR StringBuffer,
+    __in DWORD BufferLength
+    );
+
+BOOL
+YoriLibRtfGenerateEscapeString(
+    __inout PYORI_STRING TextString,
+    __out PDWORD BufferSizeNeeded,
+    __in LPTSTR StringBuffer,
+    __in DWORD BufferLength
+    );
+
+BOOL
+YoriLibRtfConvertToRtfFromVt(
+    __in PYORI_STRING VtText,
+    __inout PYORI_STRING RtfText,
+    __in_opt PDWORD ColorTable
     );
 
 // *** DEBUG.C ***
@@ -729,6 +818,9 @@ BOOL
 YoriLibLoadAdvApi32Functions();
 
 BOOL
+YoriLibLoadBCryptFunctions();
+
+BOOL
 YoriLibLoadCabinetFunctions();
 
 BOOL
@@ -754,6 +846,9 @@ YoriLibLoadVersionFunctions();
 
 BOOL
 YoriLibLoadVirtDiskFunctions();
+
+BOOL
+YoriLibLoadWtsApi32Functions();
 
 // *** FILECOMP.C ***
 
@@ -873,6 +968,16 @@ YoriLibGetWofVersionAvailable(
 /**
  A prototype for a callback function to invoke for each matching file.
  */
+typedef BOOL YORILIB_FILE_ENUM_ERROR_FN(PYORI_STRING FileName, DWORD ErrorCode, DWORD Depth, PVOID Context);
+
+/**
+ A pointer to a callback function to invoke for each matching file.
+ */
+typedef YORILIB_FILE_ENUM_ERROR_FN *PYORILIB_FILE_ENUM_ERROR_FN;
+
+/**
+ A prototype for a callback function to invoke for each matching file.
+ */
 typedef BOOL YORILIB_FILE_ENUM_FN(PYORI_STRING FileName, PWIN32_FIND_DATA FileInfo, DWORD Depth, PVOID Context);
 
 /**
@@ -938,6 +1043,7 @@ YoriLibForEachFile(
     __in DWORD MatchFlags,
     __in DWORD Depth,
     __in PYORILIB_FILE_ENUM_FN Callback,
+    __in_opt PYORILIB_FILE_ENUM_ERROR_FN ErrorCallback,
     __in PVOID Context
     );
 
@@ -961,10 +1067,82 @@ typedef struct _YORI_LIB_FILE_FILTER {
     DWORD NumberCriteria;
 
     /**
+     The size of each element.
+     */
+    DWORD ElementSize;
+
+    /**
      An array of criteria to apply.
      */
     PVOID Criteria;
 } YORI_LIB_FILE_FILTER, *PYORI_LIB_FILE_FILTER;
+
+/**
+ Specifies a pointer to a function which can compare two directory entries
+ in some fashion.
+ */
+typedef DWORD (* YORI_LIB_FILE_FILT_COMPARE_FN)(PYORI_FILE_INFO, PYORI_FILE_INFO);
+
+/**
+ Specifies a pointer to a function which can collect file information from
+ the disk or file system for some particular piece of data.
+ */
+typedef BOOL (* YORI_LIB_FILE_FILT_COLLECT_FN)(PYORI_FILE_INFO, PWIN32_FIND_DATA, PYORI_STRING);
+
+/**
+ Specifies a pointer to a function which can generate in memory file
+ information from a user provided string.
+ */
+typedef BOOL (* YORI_LIB_FILE_FILT_GENERATE_FROM_STRING_FN)(PYORI_FILE_INFO, PYORI_STRING);
+
+/**
+ An in memory representation of a single match criteria, specifying whether
+ a file matches a specified criteria.
+ */
+typedef struct _YORI_LIB_FILE_FILT_MATCH_CRITERIA {
+
+    /**
+     Pointer to a function to ingest an incoming directory entry so that we
+     have two objects to compare against.
+     */
+    YORI_LIB_FILE_FILT_COLLECT_FN CollectFn;
+
+    /**
+     Pointer to a function to compare an incoming directory entry against the
+     dummy one contained here.
+     */
+    YORI_LIB_FILE_FILT_COMPARE_FN CompareFn;
+
+    /**
+     An array indicating whether a match is found if the comparison returns
+     less than, greater than, or equal.
+     */
+    BOOL TruthStates[3];
+
+    /**
+     A dummy directory entry containing values to compare against.  This is
+     used to allow all compare functions to operate on two directory entries.
+     */
+    YORI_FILE_INFO CompareEntry;
+} YORI_LIB_FILE_FILT_MATCH_CRITERIA, *PYORI_LIB_FILE_FILT_MATCH_CRITERIA;
+
+/**
+ An in memory representation of a single match criteria and color to apply
+ in the event that a file matches the criteria.
+ */
+typedef struct _YORI_LIB_FILE_FILT_COLOR_CRITERIA {
+
+    /**
+     Information describing the criteria to match and how to determine whether
+     a match took place.
+     */
+    YORI_LIB_FILE_FILT_MATCH_CRITERIA Match;
+
+    /**
+     The color to apply in event of a match.
+     */
+    YORILIB_COLOR_ATTRIBUTES Color;
+} YORI_LIB_FILE_FILT_COLOR_CRITERIA, *PYORI_LIB_FILE_FILT_COLOR_CRITERIA;
 
 BOOL
 YoriLibFileFiltHelp();
@@ -977,15 +1155,37 @@ YoriLibFileFiltParseFilterString(
     );
 
 BOOL
+YoriLibFileFiltParseColorString(
+    __out PYORI_LIB_FILE_FILTER Filter,
+    __in PYORI_STRING ColorString,
+    __out PYORI_STRING ErrorSubstring
+    );
+
+BOOL
 YoriLibFileFiltCheckFilterMatch(
     __in PYORI_LIB_FILE_FILTER Filter,
     __in PYORI_STRING FilePath,
     __in PWIN32_FIND_DATA FileInfo
     );
 
+BOOL
+YoriLibFileFiltCheckColorMatch(
+    __in PYORI_LIB_FILE_FILTER Filter,
+    __in PYORI_STRING FilePath,
+    __in PWIN32_FIND_DATA FileInfo,
+    __out PYORILIB_COLOR_ATTRIBUTES Attribute
+    );
+
 VOID
 YoriLibFileFiltFreeFilter(
     __in PYORI_LIB_FILE_FILTER Filter
+    );
+
+BOOL
+YoriLibUpdateFindDataFromFileInformation (
+    __out PWIN32_FIND_DATA FindData,
+    __in LPTSTR FullPath,
+    __in BOOL CopyName
     );
 
 // *** FILEINFO.C ***
@@ -1681,8 +1881,24 @@ YoriLibIsDriveLetterWithColonAndSlash(
     );
 
 BOOL
+YoriLibIsPrefixedDriveLetterWithColon(
+    __in PYORI_STRING Path
+    );
+
+BOOL
+YoriLibIsPrefixedDriveLetterWithColonAndSlash(
+    __in PYORI_STRING Path
+    );
+
+BOOL
 YoriLibIsFullPathUnc(
     __in PYORI_STRING Path
+    );
+
+BOOL
+YoriLibFindEffectiveRoot(
+    __in PYORI_STRING Path,
+    __out PYORI_STRING EffectiveRoot
     );
 
 BOOL
@@ -1694,13 +1910,34 @@ YoriLibGetFullPathNameReturnAllocation(
     );
 
 BOOL
+YoriLibGetFullPathNameRelativeTo(
+    __in PYORI_STRING PrimaryDirectory,
+    __in PYORI_STRING FileName,
+    __in BOOL ReturnEscapedPath,
+    __inout PYORI_STRING Buffer,
+    __deref_opt_out LPTSTR* lpFilePart
+    );
+
+BOOL
 YoriLibExpandHomeDirectories(
     __in PYORI_STRING FileString,
     __inout PYORI_STRING ExpandedString
     );
 
 BOOL
+YoriLibIsFileNameDeviceName(
+    __in PYORI_STRING File
+    );
+
+BOOL
 YoriLibUserStringToSingleFilePath(
+    __in PYORI_STRING UserString,
+    __in BOOL bReturnEscapedPath,
+    __inout PYORI_STRING FullPath
+    );
+
+BOOL
+YoriLibUserStringToSingleFilePathOrDevice(
     __in PYORI_STRING UserString,
     __in BOOL bReturnEscapedPath,
     __inout PYORI_STRING FullPath
@@ -1790,6 +2027,11 @@ YoriLibHashRemoveByKey(
     );
 
 // *** HEXDUMP.C ***
+
+/**
+ The number of bytes of data to display in hex form per line.
+ */
+#define YORI_LIB_HEXDUMP_BYTES_PER_LINE 16
 
 /**
  If set, display the characters as well as the hex values.
@@ -2042,8 +2284,45 @@ YoriLibRecycleBinFile(
     __in PYORI_STRING FilePath
     );
 
+// *** STRMENUM.C ***
+
+BOOL
+YoriLibForEachStream(
+    __in PYORI_STRING FileSpec,
+    __in DWORD MatchFlags,
+    __in DWORD Depth,
+    __in PYORILIB_FILE_ENUM_FN Callback,
+    __in_opt PYORILIB_FILE_ENUM_ERROR_FN ErrorCallback,
+    __in PVOID Context
+    );
+
 // *** VT.C ***
 
+/**
+ Convert an ANSI attribute (in RGB order) back into Windows BGR order.
+ */
+#define YoriLibAnsiToWindowsNibble(COL)      \
+    (((COL) & 8?FOREGROUND_INTENSITY:0)|     \
+     ((COL) & 4?FOREGROUND_BLUE:0)|          \
+     ((COL) & 2?FOREGROUND_GREEN:0)|         \
+     ((COL) & 1?FOREGROUND_RED:0))
+
+/**
+ Convert an ANSI attribute, containing both a background and a foreground
+ (in RGB order) back into Windows BGR order.
+ */
+#define YoriLibAnsiToWindowsByte(COL)          \
+    (UCHAR)(YoriLibAnsiToWindowsNibble(COL) |  \
+     (YoriLibAnsiToWindowsNibble((COL)>>4)<<4));
+
+/**
+ Convert a Win32 text attribute into an ANSI escape value.  This happens
+ because the two disagree on RGB order.
+ */
+#define YoriLibWindowsToAnsi(COL)      \
+    (((COL) & FOREGROUND_BLUE?4:0)|    \
+     ((COL) & FOREGROUND_GREEN?2:0)|   \
+     ((COL) & FOREGROUND_RED?1:0))
 
 /**
  The maximum length of a string used to describe a VT sequence generated
@@ -2177,12 +2456,14 @@ BOOL
 YoriLibVtSetConsoleTextAttributeOnDevice(
     __in HANDLE hOut,
     __in DWORD Flags,
+    __in UCHAR Ctrl,
     __in WORD Attribute
     );
 
 BOOL
 YoriLibVtStringForTextAttribute(
     __inout PYORI_STRING String,
+    __in UCHAR Ctrl,
     __in WORD Attribute
     );
 
@@ -2250,6 +2531,14 @@ YoriLibPathLocateKnownExtensionUnknownLocation(
     );
 
 BOOL
+YoriLibPathLocateUnknownExtensionKnownLocation(
+    __in PYORI_STRING SearchFor,
+    __in_opt PYORI_LIB_PATH_MATCH_FN MatchAllCallback,
+    __in_opt PVOID MatchAllContext,
+    __inout PYORI_STRING FoundPath
+    );
+
+BOOL
 YoriLibPathLocateUnknownExtensionUnknownLocation(
     __in PYORI_STRING SearchFor,
     __in PYORI_STRING PathVariable,
@@ -2266,25 +2555,6 @@ YoriLibLocateExecutableInPath(
     __out PYORI_STRING PathName
     );
 
-BOOL
-YoriLibAddEnvironmentComponentToString(
-    __inout PYORI_STRING ExistingString,
-    __in PYORI_STRING NewComponent,
-    __in BOOL InsertAtFront
-    );
-
-BOOL
-YoriLibAddEnvironmentComponent(
-    __in LPTSTR EnvironmentVariable,
-    __in PYORI_STRING NewComponent,
-    __in BOOL InsertAtFront
-    );
-
-BOOL
-YoriLibRemoveEnvironmentComponent(
-    __in LPTSTR EnvironmentVariable,
-    __in PYORI_STRING ComponentToRemove
-    );
 
 // *** PRINTF.C ***
 
@@ -2373,11 +2643,6 @@ YoriLibGetEnvironmentStrings(
     );
 
 BOOL
-YoriLibSetEnvironmentStrings(
-    __in PYORI_STRING NewEnv
-    );
-
-BOOL
 YoriLibAreEnvironmentStringsValid(
     __inout PYORI_STRING EnvStrings
     );
@@ -2392,13 +2657,48 @@ YoriLibAreAnsiEnvironmentStringsValid(
 BOOL
 YoriLibAllocateAndGetEnvironmentVariable(
     __in LPCTSTR Name,
-    __out PYORI_STRING Value
+    __inout PYORI_STRING Value
     );
 
 BOOL
 YoriLibGetEnvironmentVariableAsNumber(
     __in LPCTSTR Name,
     __out PLONGLONG Value
+    );
+
+BOOL
+YoriLibAddEnvironmentComponentToString(
+    __inout PYORI_STRING ExistingString,
+    __in PYORI_STRING NewComponent,
+    __in BOOL InsertAtFront
+    );
+
+BOOL
+YoriLibAddEnvironmentComponentReturnString(
+    __in LPTSTR EnvironmentVariable,
+    __in PYORI_STRING NewComponent,
+    __in BOOL InsertAtFront,
+    __out PYORI_STRING Result
+    );
+
+BOOL
+YoriLibAddEnvironmentComponent(
+    __in LPTSTR EnvironmentVariable,
+    __in PYORI_STRING NewComponent,
+    __in BOOL InsertAtFront
+    );
+
+BOOL
+YoriLibRemoveEnvironmentComponentReturnString(
+    __in LPTSTR EnvironmentVariable,
+    __in PYORI_STRING ComponentToRemove,
+    __out PYORI_STRING Result
+    );
+
+BOOL
+YoriLibRemoveEnvironmentComponent(
+    __in LPTSTR EnvironmentVariable,
+    __in PYORI_STRING ComponentToRemove
     );
 
 // *** SCUT.C ***
@@ -2416,6 +2716,11 @@ YoriLibCreateShortcut(
     __in WORD Hotkey,
     __in BOOL MergeWithExisting,
     __in BOOL CreateNewIfNeeded
+    );
+
+BOOL
+YoriLibExecuteShortcut(
+    __in PYORI_STRING ShortcutFileName
     );
 
 // *** SELECT.C ***
@@ -2478,12 +2783,28 @@ typedef struct _YORILIB_SELECTION {
     /**
      TRUE if a selection is active on the previous rendering pass.
      */
-    BOOL SelectionPreviouslyActive;
+    BOOLEAN SelectionPreviouslyActive;
 
     /**
      TRUE if a selection is active on the next rendering pass.
      */
-    BOOL SelectionCurrentlyActive;
+    BOOLEAN SelectionCurrentlyActive;
+
+    /**
+     TRUE if a selection's initial point is known.  It won't become active
+     until it is updated to cover a cell.
+     */
+    BOOLEAN InitialSpecified;
+
+    /**
+     TRUE if the selection color has been determined.
+     */
+    BOOLEAN SelectionColorSet;
+
+    /**
+     The current selection color.
+     */
+    WORD SelectionColor;
 
     /**
      The current index of the previous selection buffers.
@@ -2499,17 +2820,18 @@ typedef struct _YORILIB_SELECTION {
 } YORILIB_SELECTION, *PYORILIB_SELECTION;
 
 BOOL
+YoriLibIsPreviousSelectionActive(
+    __in PYORILIB_SELECTION Selection
+    );
+
+BOOL
 YoriLibIsSelectionActive(
     __in PYORILIB_SELECTION Selection
     );
 
-VOID
-YoriLibCreateNewAttributeBufferFromPreviousBuffer(
-    __in PYORILIB_PREVIOUS_SELECTION_BUFFER OldAttributes,
-    __in PSMALL_RECT OldRegion,
-    __out PYORILIB_PREVIOUS_SELECTION_BUFFER NewAttributes,
-    __in PSMALL_RECT NewRegion,
-    __in BOOL UpdateNewRegionDisplay
+BOOL
+YoriLibSelectionInitialSpecified(
+    __in PYORILIB_SELECTION Selection
     );
 
 VOID
@@ -2596,6 +2918,16 @@ YoriLibGetSelectionColor(
     __in HANDLE ConsoleHandle
     );
 
+VOID
+YoriLibSetSelectionColor(
+    __in PYORILIB_SELECTION Selection,
+    __in WORD SelectionColor
+    );
+
+BOOL
+YoriLibIsYoriQuickEditEnabled();
+
+
 // *** STRING.C ***
 
 VOID
@@ -2648,6 +2980,15 @@ YoriLibDecimalStringToInt(
     );
 
 BOOL
+YoriLibStringToNumberSpecifyBase(
+    __in PYORI_STRING String,
+    __in DWORD Base,
+    __in BOOL IgnoreSeperators,
+    __out PLONGLONG Number,
+    __out PDWORD CharsConsumed
+    );
+
+BOOL
 YoriLibStringToNumber(
     __in PYORI_STRING String,
     __in BOOL IgnoreSeperators,
@@ -2666,6 +3007,11 @@ YoriLibNumberToString(
 
 VOID
 YoriLibTrimSpaces(
+    __in PYORI_STRING String
+    );
+
+VOID
+YoriLibTrimNullTerminators(
     __in PYORI_STRING String
     );
 
@@ -2773,6 +3119,13 @@ YoriLibStringToHexBuffer(
     __in DWORD BufferSize
     );
 
+BOOL
+YoriLibHexBufferToString(
+    __in PUCHAR Buffer,
+    __in DWORD BufferSize,
+    __in PYORI_STRING String
+    );
+
 LARGE_INTEGER
 YoriLibStringToFileSize(
     __in PYORI_STRING String
@@ -2847,7 +3200,8 @@ YoriLibUpdError
 YoriLibUpdateBinaryFromUrl(
     __in LPTSTR Url,
     __in_opt LPTSTR TargetName,
-    __in LPTSTR Agent
+    __in LPTSTR Agent,
+    __in_opt PSYSTEMTIME IfModifiedSince
     );
 
 LPCTSTR
@@ -2873,6 +3227,11 @@ YoriLibGetWinErrorText(
     __in DWORD ErrorCode
     );
 
+LPTSTR
+YoriLibGetNtErrorText(
+    __in DWORD ErrorCode
+    );
+
 VOID
 YoriLibFreeWinErrorText(
     __in LPTSTR ErrText
@@ -2884,8 +3243,16 @@ YoriLibCreateDirectoryAndParents(
     );
 
 BOOL
+YoriLibRenameFileToBackupName(
+    __in PYORI_STRING FullPath,
+    __out PYORI_STRING NewName
+    );
+
+BOOL
 YoriLibIsPathUrl(
     __in PYORI_STRING PackagePath
     );
+
+BOOL YoriLibIsStdInConsole();
 
 // vim:sw=4:ts=4:et:

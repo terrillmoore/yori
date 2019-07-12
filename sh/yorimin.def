@@ -3,9 +3,11 @@ NAME YORIMIN
 EXPORTS
     YoriApiAddAlias
     YoriApiAddHistoryString
+    YoriApiAddSystemAlias
     YoriApiBuiltinRegister
     YoriApiBuiltinUnregister
     YoriApiClearHistoryStrings
+    YoriApiDecrementPromptRecursionDepth
     YoriApiDeleteAlias
     YoriApiExecuteBuiltin
     YoriApiExecuteExpression
@@ -18,9 +20,12 @@ EXPORTS
     YoriApiGetJobInformation
     YoriApiGetJobOutput
     YoriApiGetNextJobId
+    YoriApiGetSystemAliasStrings
     YoriApiGetYoriVersion
+    YoriApiIncrementPromptRecursionDepth
     YoriApiPipeJobOutput
     YoriApiSetDefaultColor
+    YoriApiSetEnvironmentVariable
     YoriApiSetJobPriority
     YoriApiSetUnloadRoutine
     YoriApiTerminateJob

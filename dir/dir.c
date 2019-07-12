@@ -3,7 +3,7 @@
  *
  * Yori shell enumerate files in directories
  *
- * Copyright (c) 2017-2018 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,9 +35,10 @@ CHAR strDirHelpText[] =
         "\n"
         "Enumerate the contents of directories.\n"
         "\n"
-        "DIR [-license] [-b] [-m] [-r] [-s] [-x] [<spec>...]\n"
+        "DIR [-license] [-b] [-color] [-m] [-r] [-s] [-x] [<spec>...]\n"
         "\n"
         "   -b             Use basic search criteria for files only\n"
+        "   -color         Use file color highlighting\n"
         "   -m             Minimal display, file names only\n"
         "   -r             Display named streams\n"
         "   -s             Process files from all subdirectories\n"
@@ -51,7 +52,7 @@ CHAR strDirHelpText[] =
 BOOL
 DirHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Dir %i.%i\n"), DIR_VER_MAJOR, DIR_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Dir %i.%02i\n"), DIR_VER_MAJOR, DIR_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -114,6 +115,16 @@ typedef struct _DIR_CONTEXT {
     LONGLONG FilesFound;
 
     /**
+     Records the total number of directories processed.
+     */
+    LONGLONG DirsFound;
+
+    /**
+     The total amount of bytes consumed by all files processed.
+     */
+    LONGLONG TotalFileSize;
+
+    /**
      A string containing the directory currently being enumerated.
      */
     YORI_STRING CurrentDirectoryName;
@@ -139,6 +150,11 @@ typedef struct _DIR_CONTEXT {
      The total amount of bytes consumed by files within this directory.
      */
     LONGLONG FileSizeInThisDir;
+
+    /**
+     Color information to display against matching files.
+     */
+    YORI_LIB_FILE_FILTER ColorRules;
 
 } DIR_CONTEXT, *PDIR_CONTEXT;
 
@@ -204,6 +220,12 @@ DirOutputBeginningOfDirectorySummary(
 {
     YORI_STRING UnescapedPath;
     PYORI_STRING PathToDisplay;
+    YORI_STRING VtAttribute;
+    TCHAR VtAttributeBuffer[YORI_MAX_INTERNAL_VT_ESCAPE_CHARS];
+    YORILIB_COLOR_ATTRIBUTES Attribute;
+
+    YoriLibInitEmptyString(&VtAttribute);
+
     YoriLibInitEmptyString(&UnescapedPath);
     YoriLibUnescapePath(&DirContext->CurrentDirectoryName, &UnescapedPath);
     if (UnescapedPath.LengthInChars > 0) {
@@ -211,7 +233,28 @@ DirOutputBeginningOfDirectorySummary(
     } else {
         PathToDisplay = &DirContext->CurrentDirectoryName;
     }
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("\n Directory of %y\n\n"), PathToDisplay);
+
+    if (DirContext->ColorRules.NumberCriteria) {
+        WIN32_FIND_DATA FileInfo;
+
+        VtAttribute.StartOfString = VtAttributeBuffer;
+        VtAttribute.LengthAllocated = sizeof(VtAttributeBuffer)/sizeof(VtAttributeBuffer[0]);
+
+        YoriLibUpdateFindDataFromFileInformation(&FileInfo, DirContext->CurrentDirectoryName.StartOfString, TRUE);
+
+        if (!YoriLibFileFiltCheckColorMatch(&DirContext->ColorRules, &DirContext->CurrentDirectoryName, &FileInfo, &Attribute)) {
+            Attribute.Ctrl = YORILIB_ATTRCTRL_WINDOW_BG | YORILIB_ATTRCTRL_WINDOW_FG;
+            Attribute.Win32Attr = (UCHAR)YoriLibVtGetDefaultColor();
+        }
+
+        YoriLibVtStringForTextAttribute(&VtAttribute, Attribute.Ctrl, Attribute.Win32Attr);
+    }
+
+    if (VtAttribute.LengthInChars > 0) {
+        YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("\n Directory of %y%y%c[0m\n\n"), &VtAttribute, PathToDisplay, 27);
+    } else {
+        YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("\n Directory of %y\n\n"), PathToDisplay);
+    }
     YoriLibFreeStringContents(&UnescapedPath);
     return TRUE;
 }
@@ -233,6 +276,7 @@ DirOutputEndOfDirectorySummary(
     YORI_STRING SizeString;
     TCHAR CountStringBuffer[DIR_COUNT_FIELD_SIZE];
     TCHAR SizeStringBuffer[DIR_SIZE_FIELD_SIZE];
+    LARGE_INTEGER FreeSpace;
 
     YoriLibInitEmptyString(&SizeString);
     SizeString.StartOfString = SizeStringBuffer;
@@ -250,15 +294,67 @@ DirOutputEndOfDirectorySummary(
 
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%y File(s) %y bytes\n"), &CountString, &SizeString);
 
+
+    FreeSpace.QuadPart = 0;
+    YoriLibGetDiskFreeSpace(DirContext->CurrentDirectoryName.StartOfString, NULL, NULL, &FreeSpace);
+
     YoriLibNumberToString(&CountString, DirContext->DirsFoundInThisDir, 10, 3, ',');
+    YoriLibNumberToString(&SizeString, FreeSpace.QuadPart, 10, 3, ',');
 
     DirRightAlignString(&CountString, DIR_COUNT_FIELD_SIZE);
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%y Dir(s)\n"), &CountString);
+    DirRightAlignString(&SizeString, DIR_SIZE_FIELD_SIZE);
+
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%y Dir(s)  %y bytes free\n"), &CountString, &SizeString);
 
     DirContext->ObjectsFoundInThisDir = 0;
     DirContext->FilesFoundInThisDir = 0;
     DirContext->FileSizeInThisDir = 0;
     DirContext->DirsFoundInThisDir = 0;
+
+    YoriLibFreeStringContents(&CountString);
+    YoriLibFreeStringContents(&SizeString);
+    return TRUE;
+}
+
+/**
+ After recursively displaying the contents of a directory, this function
+ the total numbers found from all child directories.
+
+ @param DirContext Context describing the state of the enumeration.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+DirOutputEndOfRecursiveSummary(
+    __in PDIR_CONTEXT DirContext
+    )
+{
+    YORI_STRING CountString;
+    YORI_STRING SizeString;
+    TCHAR CountStringBuffer[DIR_COUNT_FIELD_SIZE];
+    TCHAR SizeStringBuffer[DIR_SIZE_FIELD_SIZE];
+
+    YoriLibInitEmptyString(&SizeString);
+    SizeString.StartOfString = SizeStringBuffer;
+    SizeString.LengthAllocated = sizeof(SizeStringBuffer)/sizeof(SizeStringBuffer[0]);
+
+    YoriLibInitEmptyString(&CountString);
+    CountString.StartOfString = CountStringBuffer;
+    CountString.LengthAllocated = sizeof(CountStringBuffer)/sizeof(CountStringBuffer[0]);
+
+    YoriLibNumberToString(&CountString, DirContext->FilesFound, 10, 3, ',');
+    YoriLibNumberToString(&SizeString, DirContext->TotalFileSize, 10, 3, ',');
+
+    DirRightAlignString(&CountString, DIR_COUNT_FIELD_SIZE);
+    DirRightAlignString(&SizeString, DIR_SIZE_FIELD_SIZE);
+
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("\n     Total Files Listed:\n"));
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%y File(s) %y bytes\n"), &CountString, &SizeString);
+
+    YoriLibNumberToString(&CountString, DirContext->DirsFound, 10, 3, ',');
+
+    DirRightAlignString(&CountString, DIR_COUNT_FIELD_SIZE);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%y Dir(s)\n"), &CountString);
 
     YoriLibFreeStringContents(&CountString);
     YoriLibFreeStringContents(&SizeString);
@@ -299,7 +395,7 @@ DirFileFoundCallback(
 
     UNREFERENCED_PARAMETER(Depth);
 
-    ASSERT(FilePath->StartOfString[FilePath->LengthInChars] == '\0');
+    ASSERT(YoriLibIsStringNullTerminated(FilePath));
 
     FilePart = YoriLibFindRightMostCharacter(FilePath, '\\');
     ASSERT(FilePart != NULL);
@@ -308,11 +404,16 @@ DirFileFoundCallback(
         YoriLibInitEmptyString(&ThisDirName);
         ThisDirName.StartOfString = FilePath->StartOfString;
         ThisDirName.LengthInChars = (DWORD)(FilePart - FilePath->StartOfString);
+        if (ThisDirName.LengthInChars == (sizeof("\\\\?\\c:") - 1) &&
+            YoriLibIsPrefixedDriveLetterWithColon(&ThisDirName)) {
+
+            ThisDirName.LengthInChars++;
+        }
         if (YoriLibCompareString(&ThisDirName, &DirContext->CurrentDirectoryName) != 0) {
             if (DirContext->ObjectsFoundInThisDir != 0 && !DirContext->MinimalDisplay) {
                 DirOutputEndOfDirectorySummary(DirContext);
             }
-            if (DirContext->CurrentDirectoryName.LengthAllocated < ThisDirName.LengthInChars) {
+            if (DirContext->CurrentDirectoryName.LengthAllocated <= ThisDirName.LengthInChars) {
                 YoriLibFreeStringContents(&DirContext->CurrentDirectoryName);
                 if (!YoriLibAllocateString(&DirContext->CurrentDirectoryName, ThisDirName.LengthInChars + 80)) {
                     return FALSE;
@@ -321,15 +422,20 @@ DirFileFoundCallback(
             memcpy(DirContext->CurrentDirectoryName.StartOfString,
                    ThisDirName.StartOfString,
                    ThisDirName.LengthInChars * sizeof(TCHAR));
+            DirContext->CurrentDirectoryName.StartOfString[ThisDirName.LengthInChars] = '\0';
             DirContext->CurrentDirectoryName.LengthInChars = ThisDirName.LengthInChars;
             if (!DirContext->MinimalDisplay) {
                 DirOutputBeginningOfDirectorySummary(DirContext);
             }
         }
-
+        FilePart++;
     }
 
-    DirContext->FilesFound++;
+    if ((FileInfo->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        DirContext->DirsFound++;
+    } else {
+        DirContext->FilesFound++;
+    }
     DirContext->ObjectsFoundInThisDir++;
 
     YoriLibInitEmptyString(&SizeString);
@@ -352,10 +458,17 @@ DirFileFoundCallback(
                 YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%y\n"), FilePath);
             }
         } else {
-            YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%s\n"), FileInfo->cFileName);
+            YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%s\n"), FilePart);
         }
 
     } else {
+
+        YORI_STRING VtAttribute;
+        TCHAR VtAttributeBuffer[YORI_MAX_INTERNAL_VT_ESCAPE_CHARS];
+        YORILIB_COLOR_ATTRIBUTES Attribute;
+
+        YoriLibInitEmptyString(&VtAttribute);
+
         FileTimeToLocalFileTime(&FileInfo->ftLastWriteTime, &LocalFileTime);
         FileTimeToSystemTime(&LocalFileTime, &FileWriteTime);
         SizeString.StartOfString = SizeStringBuffer;
@@ -377,6 +490,7 @@ DirFileFoundCallback(
                 FileSize.HighPart = FileInfo->nFileSizeHigh;
                 FileSize.LowPart = FileInfo->nFileSizeLow;
                 DirContext->FileSizeInThisDir += FileSize.QuadPart;
+                DirContext->TotalFileSize += FileSize.QuadPart;
                 YoriLibNumberToString(&SizeString, FileSize.QuadPart, 10, 3, ',');
                 if (SizeString.LengthInChars < DIR_SIZE_FIELD_SIZE) {
                     DirRightAlignString(&SizeString, DIR_SIZE_FIELD_SIZE);
@@ -393,32 +507,114 @@ DirFileFoundCallback(
             SizeString.LengthInChars = DIR_SIZE_FIELD_SIZE;
         }
 
-        if (DirContext->DisplayShortNames) {
-            YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%04i/%02i/%02i  %02i:%02i %y %12s %s\n"), FileWriteTime.wYear, FileWriteTime.wMonth, FileWriteTime.wDay, FileWriteTime.wHour, FileWriteTime.wMinute, &SizeString, FileInfo->cAlternateFileName, FileInfo->cFileName);
+        if (DirContext->ColorRules.NumberCriteria) {
+            VtAttribute.StartOfString = VtAttributeBuffer;
+            VtAttribute.LengthAllocated = sizeof(VtAttributeBuffer)/sizeof(VtAttributeBuffer[0]);
+
+            if (!YoriLibFileFiltCheckColorMatch(&DirContext->ColorRules, FilePath, FileInfo, &Attribute)) {
+                Attribute.Ctrl = YORILIB_ATTRCTRL_WINDOW_BG | YORILIB_ATTRCTRL_WINDOW_FG;
+                Attribute.Win32Attr = (UCHAR)YoriLibVtGetDefaultColor();
+            }
+
+            YoriLibVtStringForTextAttribute(&VtAttribute, Attribute.Ctrl, Attribute.Win32Attr);
+        }
+
+        if (VtAttribute.LengthInChars > 0) {
+            if (DirContext->DisplayShortNames) {
+                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%04i/%02i/%02i  %02i:%02i %y %y%12s %s%c[0m\n"), FileWriteTime.wYear, FileWriteTime.wMonth, FileWriteTime.wDay, FileWriteTime.wHour, FileWriteTime.wMinute, &SizeString, &VtAttribute, FileInfo->cAlternateFileName, FilePart, 27);
+            } else {
+                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%04i/%02i/%02i  %02i:%02i %y %y%s%c[0m\n"), FileWriteTime.wYear, FileWriteTime.wMonth, FileWriteTime.wDay, FileWriteTime.wHour, FileWriteTime.wMinute, &SizeString, &VtAttribute, FilePart, 27);
+            }
         } else {
-            YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%04i/%02i/%02i  %02i:%02i %y %s\n"), FileWriteTime.wYear, FileWriteTime.wMonth, FileWriteTime.wDay, FileWriteTime.wHour, FileWriteTime.wMinute, &SizeString, FileInfo->cFileName);
+            if (DirContext->DisplayShortNames) {
+                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%04i/%02i/%02i  %02i:%02i %y %12s %s\n"), FileWriteTime.wYear, FileWriteTime.wMonth, FileWriteTime.wDay, FileWriteTime.wHour, FileWriteTime.wMinute, &SizeString, FileInfo->cAlternateFileName, FilePart);
+            } else {
+                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%04i/%02i/%02i  %02i:%02i %y %s\n"), FileWriteTime.wYear, FileWriteTime.wMonth, FileWriteTime.wDay, FileWriteTime.wHour, FileWriteTime.wMinute, &SizeString, FilePart);
+            }
         }
 
         if (DirContext->DisplayStreams) {
             HANDLE hFind;
             WIN32_FIND_STREAM_DATA FindStreamData;
+            WIN32_FIND_DATA BogusFileInfo;
+            YORI_STRING StreamFullPath;
 
             hFind = DllKernel32.pFindFirstStreamW(FilePath->StartOfString, 0, &FindStreamData, 0);
             if (hFind != INVALID_HANDLE_VALUE) {
+                YoriLibInitEmptyString(&StreamFullPath);
+                if (DirContext->ColorRules.NumberCriteria) {
+                    if (!YoriLibAllocateString(&StreamFullPath, FilePath->LengthInChars + YORI_LIB_MAX_STREAM_NAME)) {
+                        YoriLibFreeStringContents(&SizeString);
+                        return FALSE;
+                    }
+                }
+
                 do {
                     if (_tcscmp(FindStreamData.cStreamName, L"::$DATA") != 0) {
+                        DWORD StreamLength = (DWORD)_tcslen(FindStreamData.cStreamName);
+
+                        //
+                        //  Truncate any trailing :$DATA attribute name
+                        //
+
+                        if (StreamLength > 6 && _tcscmp(FindStreamData.cStreamName + StreamLength - 6, L":$DATA") == 0) {
+                            FindStreamData.cStreamName[StreamLength - 6] = '\0';
+                        }
+
+                        if (DirContext->ColorRules.NumberCriteria) {
+
+                            //
+                            //  Generate a full path to the stream
+                            //
+
+                            StreamFullPath.LengthInChars = YoriLibSPrintfS(StreamFullPath.StartOfString, StreamFullPath.LengthAllocated, _T("%y%s"), FilePath, FindStreamData.cStreamName);
+
+                            //
+                            //  Assume file state is stream state
+                            //
+
+                            memcpy(&BogusFileInfo, FileInfo, FIELD_OFFSET(WIN32_FIND_DATA, cFileName));
+                            BogusFileInfo.cAlternateFileName[0] = '\0';
+
+                            //
+                            //  Populate stream name
+                            //
+
+                            YoriLibSPrintfS(BogusFileInfo.cFileName, sizeof(BogusFileInfo.cFileName)/sizeof(BogusFileInfo.cFileName[0]), _T("%s%s"), FileInfo->cFileName, FindStreamData.cStreamName);
+
+                            //
+                            //  Update stream information
+                            //
+
+                            YoriLibUpdateFindDataFromFileInformation(&BogusFileInfo, StreamFullPath.StartOfString, FALSE);
+                            if (!YoriLibFileFiltCheckColorMatch(&DirContext->ColorRules, &StreamFullPath, &BogusFileInfo, &Attribute)) {
+                                Attribute.Ctrl = YORILIB_ATTRCTRL_WINDOW_BG | YORILIB_ATTRCTRL_WINDOW_FG;
+                                Attribute.Win32Attr = (UCHAR)YoriLibVtGetDefaultColor();
+                            }
+
+                            YoriLibVtStringForTextAttribute(&VtAttribute, Attribute.Ctrl, Attribute.Win32Attr);
+                        }
                         YoriLibNumberToString(&SizeString, FindStreamData.StreamSize.QuadPart, 10, 3, ',');
                         if (SizeString.LengthInChars < DIR_SIZE_FIELD_SIZE) {
                             DirRightAlignString(&SizeString, DIR_SIZE_FIELD_SIZE);
                         }
-                        if (DirContext->DisplayShortNames) {
-                            YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%18s%y %13s%s%s\n"), _T(""), &SizeString, _T(""), FileInfo->cFileName, FindStreamData.cStreamName);
+                        if (VtAttribute.LengthInChars > 0) {
+                            if (DirContext->DisplayShortNames) {
+                                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%18s%y %13s%y%s%s%c[0m\n"), _T(""), &SizeString, _T(""), &VtAttribute, FileInfo->cFileName, FindStreamData.cStreamName, 27);
+                            } else {
+                                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%18s%y %y%s%s%c[0m\n"), _T(""), &SizeString, &VtAttribute, FileInfo->cFileName, FindStreamData.cStreamName, 27);
+                            }
                         } else {
-                            YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%18s%y %s%s\n"), _T(""), &SizeString, FileInfo->cFileName, FindStreamData.cStreamName);
+                            if (DirContext->DisplayShortNames) {
+                                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%18s%y %13s%s%s\n"), _T(""), &SizeString, _T(""), FileInfo->cFileName, FindStreamData.cStreamName);
+                            } else {
+                                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%18s%y %s%s\n"), _T(""), &SizeString, FileInfo->cFileName, FindStreamData.cStreamName);
+                            }
                         }
                     }
                 } while (DllKernel32.pFindNextStreamW(hFind, &FindStreamData));
                 FindClose(hFind);
+                YoriLibFreeStringContents(&StreamFullPath);
             }
         }
 
@@ -427,6 +623,66 @@ DirFileFoundCallback(
 
     return TRUE;
 }
+
+/**
+ A callback that is invoked when a directory cannot be successfully enumerated.
+
+ @param FilePath Pointer to the file path that could not be enumerated.
+
+ @param ErrorCode The Win32 error code describing the failure.
+
+ @param Depth Recursion depth, ignored in this application.
+
+ @param Context Pointer to the DirContext, indicating whether the request is
+        recursive or not.  Recursive enumerates are more willing to continue
+        on error than single directory enumerates.
+
+ @return TRUE to continute enumerating, FALSE to abort.
+ */
+BOOL
+DirFileEnumerateErrorCallback(
+    __in PYORI_STRING FilePath,
+    __in DWORD ErrorCode,
+    __in DWORD Depth,
+    __in PVOID Context
+    )
+{
+    YORI_STRING UnescapedFilePath;
+    BOOL Result = FALSE;
+    PDIR_CONTEXT DirContext = (PDIR_CONTEXT)Context;
+
+    UNREFERENCED_PARAMETER(Depth);
+
+    YoriLibInitEmptyString(&UnescapedFilePath);
+    if (!YoriLibUnescapePath(FilePath, &UnescapedFilePath)) {
+        UnescapedFilePath.StartOfString = FilePath->StartOfString;
+        UnescapedFilePath.LengthInChars = FilePath->LengthInChars;
+    }
+
+    if (ErrorCode == ERROR_FILE_NOT_FOUND || ErrorCode == ERROR_PATH_NOT_FOUND) {
+        Result = TRUE;
+    } else {
+        LPTSTR ErrText = YoriLibGetWinErrorText(ErrorCode);
+        YORI_STRING DirName;
+        LPTSTR FilePart;
+        YoriLibInitEmptyString(&DirName);
+        DirName.StartOfString = UnescapedFilePath.StartOfString;
+        FilePart = YoriLibFindRightMostCharacter(&UnescapedFilePath, '\\');
+        if (FilePart != NULL) {
+            DirName.LengthInChars = (DWORD)(FilePart - DirName.StartOfString);
+        } else {
+            DirName.LengthInChars = UnescapedFilePath.LengthInChars;
+        }
+        YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("Enumerate of %y failed: %s"), &DirName, ErrText);
+        YoriLibFreeWinErrorText(ErrText);
+        if (DirContext->Recursive) {
+            Result = TRUE;
+        }
+    }
+    YoriLibFreeStringContents(&UnescapedFilePath);
+    return Result;
+}
+
 
 #ifdef YORI_BUILTIN
 /**
@@ -461,6 +717,7 @@ ENTRYPOINT(
     DWORD StartArg = 0;
     DWORD MatchFlags;
     BOOL BasicEnumeration = FALSE;
+    BOOL DisplayColor = FALSE;
     DIR_CONTEXT DirContext;
     YORI_STRING Arg;
 
@@ -477,10 +734,13 @@ ENTRYPOINT(
                 DirHelp();
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("license")) == 0) {
-                YoriLibDisplayMitLicense(_T("2017-2018"));
+                YoriLibDisplayMitLicense(_T("2017-2019"));
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("b")) == 0) {
                 BasicEnumeration = TRUE;
+                ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("color")) == 0) {
+                DisplayColor = TRUE;
                 ArgumentUnderstood = TRUE;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("m")) == 0) {
                 DirContext.MinimalDisplay = TRUE;
@@ -494,6 +754,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("x")) == 0) {
                 DirContext.DisplayShortNames = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                ArgumentUnderstood = TRUE;
+                StartArg = i + 1;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -512,6 +776,21 @@ ENTRYPOINT(
         }
     }
 
+    if (DisplayColor) {
+        YORI_STRING ErrorSubstring;
+        YORI_STRING Combined;
+        if (YoriLibLoadCombinedFileColorString(NULL, &Combined)) {
+            if (!YoriLibFileFiltParseColorString(&DirContext.ColorRules, &Combined, &ErrorSubstring)) {
+                YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("dir: parse error at %y\n"), &ErrorSubstring);
+            }
+            YoriLibFreeStringContents(&Combined);
+        }
+    }
+
+#if YORI_BUILTIN
+    YoriLibCancelEnable();
+#endif
+
     //
     //  If no file name is specified, use *
     //
@@ -529,26 +808,38 @@ ENTRYPOINT(
         MatchFlags |= YORILIB_FILEENUM_BASIC_EXPANSION;
     }
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YORI_STRING FilesInDirectorySpec;
         YoriLibConstantString(&FilesInDirectorySpec, _T("*"));
-        YoriLibForEachFile(&FilesInDirectorySpec, MatchFlags, 0, DirFileFoundCallback, &DirContext);
+        YoriLibForEachStream(&FilesInDirectorySpec,
+                             MatchFlags,
+                             0,
+                             DirFileFoundCallback,
+                             DirFileEnumerateErrorCallback,
+                             &DirContext);
     } else {
         for (i = StartArg; i < ArgC; i++) {
-            YoriLibForEachFile(&ArgV[i], MatchFlags, 0, DirFileFoundCallback, &DirContext);
+            YoriLibForEachStream(&ArgV[i],
+                                 MatchFlags,
+                                 0,
+                                 DirFileFoundCallback,
+                                 DirFileEnumerateErrorCallback,
+                                 &DirContext);
         }
     }
-
 
     if (DirContext.ObjectsFoundInThisDir > 0 && !DirContext.MinimalDisplay) {
         DirOutputEndOfDirectorySummary(&DirContext);
     } 
 
     YoriLibFreeStringContents(&DirContext.CurrentDirectoryName);
+    YoriLibFileFiltFreeFilter(&DirContext.ColorRules);
 
-    if (DirContext.FilesFound == 0) {
+    if (DirContext.FilesFound == 0 && DirContext.DirsFound == 0) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("dir: no matching files found\n"));
         return EXIT_FAILURE;
+    } else if (DirContext.Recursive) {
+        DirOutputEndOfRecursiveSummary(&DirContext);
     }
 
     return EXIT_SUCCESS;

@@ -33,11 +33,6 @@
 YORI_LIST_ENTRY YoriShLoadedModules;
 
 /**
- List of builtin callbacks currently registered with Yori.
- */
-YORI_LIST_ENTRY YoriShBuiltinCallbacks;
-
-/**
  Hash table of builtin callbacks currently registered with Yori.
  */
 PYORI_HASH_TABLE YoriShBuiltinHash;
@@ -84,6 +79,7 @@ YoriShLoadDll(
     PYORI_SH_LOADED_MODULE FoundEntry = NULL;
     PYORI_LIST_ENTRY ListEntry;
     DWORD DllNameLength;
+    DWORD OldErrorMode;
 
     if (YoriShLoadedModules.Next != NULL) {
         ListEntry = YoriLibGetNextListEntry(&YoriShLoadedModules, NULL);
@@ -111,11 +107,20 @@ YoriShLoadDll(
     FoundEntry->ReferenceCount = 1;
     FoundEntry->UnloadNotify = NULL;
 
+    //
+    //  Disable the dialog if the file is not a valid DLL.  This might really
+    //  be a DOS executable, not a DLL.
+    //
+
+    OldErrorMode = SetErrorMode(SEM_FAILCRITICALERRORS);
+
     FoundEntry->ModuleHandle = LoadLibrary(DllName);
     if (FoundEntry->ModuleHandle == NULL) {
+        SetErrorMode(OldErrorMode);
         YoriLibFree(FoundEntry);
         return NULL;
     }
+    SetErrorMode(OldErrorMode);
 
     if (YoriShLoadedModules.Next == NULL) {
         YoriLibInitializeListHead(&YoriShLoadedModules);
@@ -334,7 +339,17 @@ YoriShExecuteInProc(
         }
     }
 
-    YoriShInitializeRedirection(ExecContext, TRUE, &PreviousRedirectContext);
+    ExitCode = YoriShInitializeRedirection(ExecContext, TRUE, &PreviousRedirectContext);
+    if (ExitCode != ERROR_SUCCESS) {
+        if (ArgV != CmdContext->ArgV) {
+            for (Count = 0; Count < ArgC; Count++) {
+                YoriLibFreeStringContents(&ArgV[Count]);
+            }
+            YoriLibDereference(ArgV);
+        }
+
+        return ExitCode;
+    }
 
     //
     //  Unlike external processes, builtins need to start buffering
@@ -356,7 +371,9 @@ YoriShExecuteInProc(
         }
     }
 
+    YoriShGlobal.RecursionDepth++;
     ExitCode = Fn(ArgC, ArgV);
+    YoriShGlobal.RecursionDepth--;
     YoriShRevertRedirection(&PreviousRedirectContext);
 
     if (WasPipe) {
@@ -580,8 +597,8 @@ YoriShBuiltinRegister(
     )
 {
     PYORI_SH_BUILTIN_CALLBACK NewCallback;
-    if (YoriShBuiltinCallbacks.Next == NULL) {
-        YoriLibInitializeListHead(&YoriShBuiltinCallbacks);
+    if (YoriShGlobal.BuiltinCallbacks.Next == NULL) {
+        YoriLibInitializeListHead(&YoriShGlobal.BuiltinCallbacks);
     }
     if (YoriShBuiltinHash == NULL) {
         YoriShBuiltinHash = YoriLibAllocateHashTable(50);
@@ -615,7 +632,7 @@ YoriShBuiltinRegister(
     //  the first to be removed.
     //
 
-    YoriLibInsertList(&YoriShBuiltinCallbacks, &NewCallback->ListEntry);
+    YoriLibInsertList(&YoriShGlobal.BuiltinCallbacks, &NewCallback->ListEntry);
     YoriLibHashInsertByKey(YoriShBuiltinHash, &NewCallback->BuiltinName, NewCallback, &NewCallback->HashEntry);
     return TRUE;
 }
@@ -677,8 +694,8 @@ YoriShBuiltinUnregisterAll(
     PYORI_SH_BUILTIN_CALLBACK Callback;
     PYORI_SH_BUILTIN_UNLOAD_CALLBACK UnloadCallback;
 
-    if (YoriShBuiltinCallbacks.Next != NULL) {
-        ListEntry = YoriLibGetNextListEntry(&YoriShBuiltinCallbacks, NULL);
+    if (YoriShGlobal.BuiltinCallbacks.Next != NULL) {
+        ListEntry = YoriLibGetNextListEntry(&YoriShGlobal.BuiltinCallbacks, NULL);
         while (ListEntry != NULL) {
             Callback = CONTAINING_RECORD(ListEntry, YORI_SH_BUILTIN_CALLBACK, ListEntry);
             YoriLibRemoveListItem(&Callback->ListEntry);
@@ -689,7 +706,7 @@ YoriShBuiltinUnregisterAll(
             }
             YoriLibFreeStringContents(&Callback->BuiltinName);
             YoriLibDereference(Callback);
-            ListEntry = YoriLibGetNextListEntry(&YoriShBuiltinCallbacks, NULL);
+            ListEntry = YoriLibGetNextListEntry(&YoriShGlobal.BuiltinCallbacks, NULL);
         }
     }
 
@@ -758,7 +775,7 @@ YoriShExecuteBuiltinString(
         return FALSE;
     }
 
-    g_ErrorLevel = YoriShBuiltIn(ExecContext);
+    YoriShGlobal.ErrorLevel = YoriShBuiltIn(ExecContext);
 
     YoriShFreeExecPlan(&ExecPlan);
     YoriShFreeCmdContext(&CmdContext);

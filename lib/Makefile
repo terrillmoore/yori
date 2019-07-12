@@ -6,6 +6,7 @@ compile: yorilib.lib
 DEBUG=0
 
 OBJS=\
+	 builtin.obj  \
 	 cabinet.obj  \
 	 call.obj     \
 	 cancel.obj   \
@@ -14,6 +15,7 @@ OBJS=\
 	 color.obj    \
 	 cshot.obj    \
 	 cvthtml.obj  \
+	 cvtrtf.obj   \
 	 debug.obj    \
 	 dyld.obj     \
 	 env.obj      \
@@ -40,6 +42,7 @@ OBJS=\
 	 scut.obj     \
 	 select.obj   \
 	 string.obj   \
+	 strmenum.obj \
 	 update.obj   \
 	 util.obj     \
 	 vt.obj       \

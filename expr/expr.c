@@ -45,7 +45,7 @@ CHAR strExprHelpText[] =
 BOOL
 ExprHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Expr %i.%i\n"), EXPR_VER_MAJOR, EXPR_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Expr %i.%02i\n"), EXPR_VER_MAJOR, EXPR_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -205,7 +205,7 @@ ENTRYPOINT(
         }
     }
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("expr: missing argument\n"));
         return EXIT_FAILURE;
     }

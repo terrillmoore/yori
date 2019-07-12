@@ -57,14 +57,18 @@ DIRS=crt       \
      date      \
      df        \
      dir       \
+     du        \
      echo      \
+     env       \
      erase     \
+     err       \
      expr      \
      finfo     \
      for       \
      fscmp     \
      get       \
      grpcmp    \
+     hash      \
      help      \
 	 hexdump   \
      hilite    \
@@ -73,6 +77,7 @@ DIRS=crt       \
      intcmp    \
      lines     \
      lsof      \
+     mem       \
      mkdir     \
      mklink    \
      more      \
@@ -83,22 +88,27 @@ DIRS=crt       \
      path      \
      pause     \
      pkglib    \
+     ps        \
      readline  \
      repl      \
      rmdir     \
      scut      \
      sdir      \
      setver    \
+     shutdn    \
      sleep     \
      split     \
+     sponge    \
      start     \
      strcmp    \
      sync      \
      tail      \
      tee       \
+     timethis  \
      title     \
      touch     \
      type      \
+     vhdtool   \
      vol       \
      which     \
      wininfo   \
@@ -106,6 +116,7 @@ DIRS=crt       \
      ydbg      \
      ypm       \
      ysetup    \
+     yui       \
 
 all.real: writeconfigcache
 	@$(CURRENTTIME)
@@ -121,8 +132,8 @@ beta: all.real
 	@move $(BINDIR) beta\$(ARCH)
 	@move $(SYMDIR) beta\$(ARCH)\sym
 
-clean:
-	@$(FOR) %%i in ($(SHDIRS) $(DIRS)) do $(STARTCMD)@if exist %%i echo *** Cleaning %%i & cd %%i & $(BUILD) PROBECOMPILER=0 PROBELINKER=0 clean & cd ..$(STARTCMD)
+clean: writeconfigcache
+	@$(FOR) %%i in ($(SHDIRS) $(DIRS)) do $(STARTCMD)@if exist %%i echo *** Cleaning %%i & cd %%i & $(BUILD) clean READCONFIGCACHEFILE=..\$(WRITECONFIGCACHEFILE) & cd ..$(STARTCMD)
 	@if exist *~ erase *~
 	@$(FOR_ST) /D %%i in ($(MODDIR) $(BINDIR) $(SYMDIR)) do @if exist %%i $(RMDIR) /s/q %%i
 	@if exist $(WRITECONFIGCACHEFILE) erase $(WRITECONFIGCACHEFILE)

@@ -3,7 +3,7 @@
  *
  * Yori exported API for modules to call
  *
- * Copyright (c) 2017-2018 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -58,6 +58,26 @@ YoriApiAddHistoryString(
 }
 
 /**
+ Add a new, or replace an existing, system shell alias.  These are not sent to
+ conhost and are not enumerated by default.  User aliases take precedence over
+ system aliases, so this command will be ignored if a user alias is present.
+
+ @param Alias The alias to add or update.
+
+ @param Value The value to assign to the alias.
+
+ @return TRUE if the alias was successfully updated, FALSE if it was not.
+ */
+BOOL
+YoriApiAddSystemAlias(
+    __in PYORI_STRING Alias,
+    __in PYORI_STRING Value
+    )
+{
+    return YoriShAddAlias(Alias, Value, TRUE);
+}
+
+/**
  Associate a new builtin command with a function pointer to be invoked when
  the command is specified.
 
@@ -107,6 +127,24 @@ YoriApiClearHistoryStrings(
 {
     YoriShClearAllHistory();
     return TRUE;
+}
+
+/**
+ Decrements the recursion depth that the prompt should display when the $+$
+ token is used.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriApiDecrementPromptRecursionDepth(
+    )
+{
+    ASSERT(YoriShGlobal.PromptRecursionDepth > 0);
+    if (YoriShGlobal.PromptRecursionDepth > 0) {
+        YoriShGlobal.PromptRecursionDepth--;
+        return TRUE;
+    }
+    return FALSE;
 }
 
 /**
@@ -167,8 +205,8 @@ YoriApiExitProcess(
     __in DWORD ExitCode
     )
 {
-    g_ExitProcess = TRUE;
-    g_ExitProcessExitCode = ExitCode;
+    YoriShGlobal.ExitProcess = TRUE;
+    YoriShGlobal.ExitProcessExitCode = ExitCode;
 }
 
 /**
@@ -204,8 +242,8 @@ YoriApiFreeYoriString(
 }
 
 /**
- Build the complete set of aliases into a an array of key value pairs
- and return a pointer to the result.  This must be freed with a
+ Build the complete set of user defined aliases into a an array of key value
+ pairs and return a pointer to the result.  This must be freed with a
  subsequent call to @ref YoriApiFreeYoriString .
 
  @param AliasStrings Pointer to a string structure to populate with a newly
@@ -219,7 +257,7 @@ YoriApiGetAliasStrings(
     )
 {
     YoriLibInitEmptyString(AliasStrings);
-    return YoriShGetAliasStrings(FALSE, AliasStrings);
+    return YoriShGetAliasStrings(YORI_SH_GET_ALIAS_STRINGS_INCLUDE_USER, AliasStrings);
 }
 
 /**
@@ -228,7 +266,7 @@ YoriApiGetAliasStrings(
 DWORD
 YoriApiGetErrorLevel()
 {
-    return g_ErrorLevel;
+    return YoriShGlobal.ErrorLevel;
 }
 
 /**
@@ -329,6 +367,25 @@ YoriApiGetNextJobId(
 }
 
 /**
+ Build the complete set of system defined aliases into a an array of key value
+ pairs and return a pointer to the result.  This must be freed with a
+ subsequent call to @ref YoriApiFreeYoriString .
+
+ @param AliasStrings Pointer to a string structure to populate with a newly
+        allocated string containing a set of NULL terminated alias strings.
+
+ @return TRUE to indicate success, or FALSE to indicate failure.
+ */
+BOOL
+YoriApiGetSystemAliasStrings(
+    __out PYORI_STRING AliasStrings
+    )
+{
+    YoriLibInitEmptyString(AliasStrings);
+    return YoriShGetAliasStrings(YORI_SH_GET_ALIAS_STRINGS_INCLUDE_INTERNAL, AliasStrings);
+}
+
+/**
  Returns the version number associated with this build of the Yori shell.
 
  @param MajorVersion On successful completion, updated to contain the major
@@ -347,6 +404,20 @@ YoriApiGetYoriVersion(
 {
     *MajorVersion = YORI_VER_MAJOR;
     *MinorVersion = YORI_VER_MINOR;
+    return TRUE;
+}
+
+/**
+ Increments the recursion depth that the prompt should display when the $+$
+ token is used.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriApiIncrementPromptRecursionDepth(
+    )
+{
+    YoriShGlobal.PromptRecursionDepth++;
     return TRUE;
 }
 
@@ -383,6 +454,24 @@ YoriApiSetDefaultColor(
     )
 {
     YoriLibVtSetDefaultColor(NewDefaultColor);
+}
+
+/**
+ Set an environment variable in the Yori shell process.
+
+ @param VariableName The variable name to set.
+
+ @param Value Pointer to the value to set.  If NULL, the variable is deleted.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriApiSetEnvironmentVariable(
+    __in PYORI_STRING VariableName,
+    __in_opt PYORI_STRING Value
+    )
+{
+    return YoriShSetEnvironmentVariable(VariableName, Value);
 }
 
 /**

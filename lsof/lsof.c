@@ -46,7 +46,7 @@ CHAR strLsofHelpText[] =
 BOOL
 LsofHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Lsof %i.%i\n"), LSOF_VER_MAJOR, LSOF_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Lsof %i.%02i\n"), LSOF_VER_MAJOR, LSOF_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -218,6 +218,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("s")) == 0) {
                 Recursive = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                StartArg = i + 1;
+                ArgumentUnderstood = TRUE;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -248,7 +252,7 @@ ENTRYPOINT(
     //  the file and use that
     //
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("lsof: missing argument\n"));
         return EXIT_FAILURE;
     } else {
@@ -263,7 +267,7 @@ ENTRYPOINT(
         for (i = StartArg; i < ArgC; i++) {
 
             LsofContext.FilesFoundThisArg = 0;
-            YoriLibForEachFile(&ArgV[i], MatchFlags, 0, LsofFileFoundCallback, &LsofContext);
+            YoriLibForEachStream(&ArgV[i], MatchFlags, 0, LsofFileFoundCallback, NULL, &LsofContext);
             if (LsofContext.FilesFoundThisArg == 0) {
                 YORI_STRING FullPath;
                 YoriLibInitEmptyString(&FullPath);

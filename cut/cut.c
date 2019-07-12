@@ -3,7 +3,7 @@
  *
  * Yori shell filter within a line of output
  *
- * Copyright (c) 2017-2018 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -51,7 +51,7 @@ CHAR strCutHelpText[] =
 BOOL
 CutHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Cut %i.%i\n"), CUT_VER_MAJOR, CUT_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Cut %i.%02i\n"), CUT_VER_MAJOR, CUT_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -69,6 +69,12 @@ typedef struct _CUT_CONTEXT {
      is delimited via bytes.
      */
     BOOL FieldDelimited;
+
+    /**
+     TRUE if file enumeration is being performed recursively; FALSE if it is
+     in one directory only.
+     */
+    BOOL Recursive;
 
     /**
      For a field delimited stream, contains the NULL terminated string
@@ -95,7 +101,14 @@ typedef struct _CUT_CONTEXT {
     /**
      Counts the number of files encountered as files are processed.
      */
-    DWORD FilesFound;
+    LONGLONG FilesFound;
+
+    /**
+     Counts the number of files encountered as files are processed within each
+     command line argument.
+     */
+    LONGLONG FilesFoundThisArg;
+
 } CUT_CONTEXT, *PCUT_CONTEXT;
 
 /**
@@ -179,7 +192,8 @@ CutFilterHandle(
 
  @param Filename Pointer to the file path that was found.
 
- @param FindData Information about the file.
+ @param FindData Information about the file.  This can be NULL if the file
+        was not found by enumeration.
 
  @param Depth Recursion depth, unused in this application.
 
@@ -191,7 +205,7 @@ CutFilterHandle(
 BOOL
 CutFileFoundCallback(
     __in PYORI_STRING Filename,
-    __in PWIN32_FIND_DATA FindData,
+    __in_opt PWIN32_FIND_DATA FindData,
     __in DWORD Depth,
     __in PVOID Context
     )
@@ -202,9 +216,16 @@ CutFileFoundCallback(
     UNREFERENCED_PARAMETER(Depth);
     UNREFERENCED_PARAMETER(FindData);
 
-    ASSERT(Filename->StartOfString[Filename->LengthInChars] == '\0');
+    ASSERT(YoriLibIsStringNullTerminated(Filename));
 
-    hSource = CreateFile(Filename->StartOfString, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    hSource = CreateFile(Filename->StartOfString,
+                         GENERIC_READ,
+                         FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+                         NULL,
+                         OPEN_EXISTING,
+                         FILE_ATTRIBUTE_NORMAL,
+                         NULL);
+
     if (hSource == INVALID_HANDLE_VALUE) {
         DWORD LastError = GetLastError();
         LPTSTR ErrText = YoriLibGetWinErrorText(LastError);
@@ -214,11 +235,73 @@ CutFileFoundCallback(
     }
 
     CutContext->FilesFound++;
+    CutContext->FilesFoundThisArg++;
     CutFilterHandle(hSource, CutContext);
 
     CloseHandle(hSource);
     return TRUE;
 }
+
+/**
+ A callback that is invoked when a directory cannot be successfully enumerated.
+
+ @param FilePath Pointer to the file path that could not be enumerated.
+
+ @param ErrorCode The Win32 error code describing the failure.
+
+ @param Depth Recursion depth, ignored in this application.
+
+ @param Context Pointer to the context block indicating whether the
+        enumeration was recursive.  Recursive enumerates do not complain
+        if a matching file is not in every single directory, because
+        common usage expects files to be in a subset of directories only.
+
+ @return TRUE to continute enumerating, FALSE to abort.
+ */
+BOOL
+CutFileEnumerateErrorCallback(
+    __in PYORI_STRING FilePath,
+    __in DWORD ErrorCode,
+    __in DWORD Depth,
+    __in PVOID Context
+    )
+{
+    YORI_STRING UnescapedFilePath;
+    BOOL Result = FALSE;
+    PCUT_CONTEXT CutContext = (PCUT_CONTEXT)Context;
+
+    UNREFERENCED_PARAMETER(Depth);
+
+    YoriLibInitEmptyString(&UnescapedFilePath);
+    if (!YoriLibUnescapePath(FilePath, &UnescapedFilePath)) {
+        UnescapedFilePath.StartOfString = FilePath->StartOfString;
+        UnescapedFilePath.LengthInChars = FilePath->LengthInChars;
+    }
+
+    if (ErrorCode == ERROR_FILE_NOT_FOUND || ErrorCode == ERROR_PATH_NOT_FOUND) {
+        if (!CutContext->Recursive) {
+            YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("File or directory not found: %y\n"), &UnescapedFilePath);
+        }
+        Result = TRUE;
+    } else {
+        LPTSTR ErrText = YoriLibGetWinErrorText(ErrorCode);
+        YORI_STRING DirName;
+        LPTSTR FilePart;
+        YoriLibInitEmptyString(&DirName);
+        DirName.StartOfString = UnescapedFilePath.StartOfString;
+        FilePart = YoriLibFindRightMostCharacter(&UnescapedFilePath, '\\');
+        if (FilePart != NULL) {
+            DirName.LengthInChars = (DWORD)(FilePart - DirName.StartOfString);
+        } else {
+            DirName.LengthInChars = UnescapedFilePath.LengthInChars;
+        }
+        YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("Enumerate of %y failed: %s"), &DirName, ErrText);
+        YoriLibFreeWinErrorText(ErrText);
+    }
+    YoriLibFreeStringContents(&UnescapedFilePath);
+    return Result;
+}
+
 
 #ifdef YORI_BUILTIN
 /**
@@ -251,7 +334,6 @@ ENTRYPOINT(
     BOOL ArgumentUnderstood;
     DWORD i;
     CUT_CONTEXT CutContext;
-    BOOL Recursive = FALSE;
     BOOL BasicEnumeration = FALSE;
     DWORD StartArg = 0;
     YORI_STRING Arg;
@@ -270,7 +352,7 @@ ENTRYPOINT(
                 CutHelp();
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("license")) == 0) {
-                YoriLibDisplayMitLicense(_T("2017-2018"));
+                YoriLibDisplayMitLicense(_T("2017-2019"));
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("b")) == 0) {
                 BasicEnumeration = TRUE;
@@ -308,8 +390,12 @@ ENTRYPOINT(
                     i++;
                 }
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("s")) == 0) {
-                Recursive = TRUE;
+                CutContext.Recursive = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                ArgumentUnderstood = TRUE;
+                StartArg = i + 1;
+                break;
             }
         } else {
             StartArg = i;
@@ -325,10 +411,12 @@ ENTRYPOINT(
         CutContext.FieldSeperator = _T(",");
     }
 
-    if (StartArg == 0) {
-        DWORD FileType = GetFileType(GetStdHandle(STD_INPUT_HANDLE));
-        FileType = FileType & ~(FILE_TYPE_REMOTE);
-        if (FileType == FILE_TYPE_CHAR) {
+#if YORI_BUILTIN
+    YoriLibCancelEnable();
+#endif
+
+    if (StartArg == 0 || StartArg == ArgC) {
+        if (YoriLibIsStdInConsole()) {
             YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("No file or pipe for input\n"));
             return EXIT_FAILURE;
         }
@@ -336,7 +424,7 @@ ENTRYPOINT(
         CutFilterHandle(hSource, &CutContext);
     } else {
         DWORD MatchFlags = YORILIB_FILEENUM_RETURN_FILES;
-        if (Recursive) {
+        if (CutContext.Recursive) {
             MatchFlags |= YORILIB_FILEENUM_RECURSE_BEFORE_RETURN;
         }
         if (BasicEnumeration) {
@@ -344,7 +432,24 @@ ENTRYPOINT(
         }
 
         for (i = StartArg; i < ArgC; i++) {
-            YoriLibForEachFile(&ArgV[i], MatchFlags, 0, CutFileFoundCallback, &CutContext);
+
+            CutContext.FilesFoundThisArg = 0;
+
+            YoriLibForEachStream(&ArgV[i],
+                                 MatchFlags,
+                                 0,
+                                 CutFileFoundCallback,
+                                 CutFileEnumerateErrorCallback,
+                                 &CutContext);
+
+            if (CutContext.FilesFoundThisArg == 0) {
+                YORI_STRING FullPath;
+                YoriLibInitEmptyString(&FullPath);
+                if (YoriLibUserStringToSingleFilePath(&ArgV[i], TRUE, &FullPath)) {
+                    CutFileFoundCallback(&FullPath, NULL, 0, &CutContext);
+                    YoriLibFreeStringContents(&FullPath);
+                }
+            }
         }
 
         if (CutContext.FilesFound == 0) {

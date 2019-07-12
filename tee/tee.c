@@ -45,7 +45,7 @@ CHAR strTeeHelpText[] =
 BOOL
 TeeHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Tee %i.%i\n"), TEE_VER_MAJOR, TEE_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Tee %i.%02i\n"), TEE_VER_MAJOR, TEE_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -142,7 +142,6 @@ ENTRYPOINT(
     DWORD StartArg = 0;
     BOOL Append = FALSE;
     TEE_CONTEXT TeeContext;
-    DWORD FileType;
     YORI_STRING FileName;
     YORI_STRING Arg;
 
@@ -164,6 +163,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("a")) == 0) {
                 Append = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                StartArg = i + 1;
+                ArgumentUnderstood = TRUE;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -181,14 +184,12 @@ ENTRYPOINT(
     //  the file and use that
     //
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("tee: argument missing\n"));
         return EXIT_FAILURE;
     }
 
-    FileType = GetFileType(GetStdHandle(STD_INPUT_HANDLE));
-    FileType = FileType & ~(FILE_TYPE_REMOTE);
-    if (FileType == FILE_TYPE_CHAR) {
+    if (YoriLibIsStdInConsole()) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("No file or pipe for input\n"));
         return EXIT_FAILURE;
     }

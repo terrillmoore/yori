@@ -43,7 +43,7 @@ CHAR strClsHelpText[] =
 BOOL
 ClsHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Cls %i.%i\n"), CLS_VER_MAJOR, CLS_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Cls %i.%02i\n"), CLS_VER_MAJOR, CLS_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -55,7 +55,7 @@ ClsHelp()
 /**
  The main entrypoint for the cls builtin command.
  */
-#define ENTRYPOINT YoriCmd_CLS
+#define ENTRYPOINT YoriCmd_YCLS
 #else
 /**
  The main entrypoint for the cls standalone application.

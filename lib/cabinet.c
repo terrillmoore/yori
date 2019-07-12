@@ -392,7 +392,7 @@ YoriLibCabFileOpenForExtract(
     __out_opt PYORI_STRING ErrorString
     )
 {
-    HANDLE hFile;
+    HANDLE hFile = INVALID_HANDLE_VALUE;
     DWORD Err = 0;
 
     while (TRUE) {
@@ -405,7 +405,7 @@ YoriLibCabFileOpenForExtract(
                            GENERIC_READ | GENERIC_WRITE,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            NULL,
-                           CREATE_NEW,
+                           CREATE_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL,
                            NULL);
 
@@ -454,99 +454,7 @@ YoriLibCabFileOpenForExtract(
             }
 
             break;
-
-        //
-        //  If the file is already there, try to rename it out of the way.
-        //
-
-        } else if (Err == ERROR_FILE_EXISTS) {
-
-            YORI_STRING NewName;
-            DWORD ProbeIndex;
-            HANDLE hDeadFile;
-
-            if (!YoriLibAllocateString(&NewName, FullPath->LengthInChars + sizeof(".old.9"))) {
-                break;
-            }
-
-            for (ProbeIndex = 0; ProbeIndex < 10; ProbeIndex++) {
-
-                if (ProbeIndex == 0) {
-                    NewName.LengthInChars = YoriLibSPrintf(NewName.StartOfString, _T("%y.old"), FullPath);
-                } else {
-                    NewName.LengthInChars = YoriLibSPrintf(NewName.StartOfString, _T("%y.old.%i"), FullPath, ProbeIndex);
-                }
-
-                //
-                //  Try to delete the old file via DeleteFile and
-                //  FILE_FLAG_DELETE_ON_CLOSE, then do a superseding
-                //  rename, and hope one of them works
-                //
-
-                DeleteFile(NewName.StartOfString);
-                hDeadFile = CreateFile(NewName.StartOfString,
-                                       DELETE,
-                                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                       NULL,
-                                       OPEN_EXISTING,
-                                       FILE_FLAG_DELETE_ON_CLOSE,
-                                       NULL);
-
-                if (hDeadFile != INVALID_HANDLE_VALUE) {
-                    CloseHandle(hDeadFile);
-                }
-
-                if (MoveFileEx(FullPath->StartOfString, NewName.StartOfString, MOVEFILE_REPLACE_EXISTING)) {
-                    break;
-                }
-            }
-
-            //
-            //  If we couldn't find a suitable name in 10 attempts, stop.
-            //
-
-            if (ProbeIndex == 10) {
-                YoriLibFreeStringContents(&NewName);
-                break;
-            }
-
-            //
-            //  Try again to create the final file.  If it fails, try to put
-            //  the original file back.
-            //
-
-            hFile = CreateFile(FullPath->StartOfString,
-                               GENERIC_READ | GENERIC_WRITE,
-                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                               NULL,
-                               CREATE_NEW,
-                               FILE_ATTRIBUTE_NORMAL,
-                               NULL);
-
-            if (hFile == INVALID_HANDLE_VALUE) {
-                Err = GetLastError();
-                MoveFileEx(NewName.StartOfString, FullPath->StartOfString, MOVEFILE_REPLACE_EXISTING);
-            } else {
-
-                //
-                //  Try to delete the old file via DeleteFile and
-                //  FILE_FLAG_DELETE_ON_CLOSE, and hope one of them works
-                //
-
-                DeleteFile(NewName.StartOfString);
-                hDeadFile = CreateFile(NewName.StartOfString,
-                                       DELETE,
-                                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                       NULL,
-                                       OPEN_EXISTING,
-                                       FILE_FLAG_DELETE_ON_CLOSE,
-                                       NULL);
-
-                if (hDeadFile != INVALID_HANDLE_VALUE) {
-                    CloseHandle(hDeadFile);
-                }
-            }
-            YoriLibFreeStringContents(&NewName);
+        } else {
             break;
         }
     }
@@ -799,7 +707,7 @@ YoriLibCabFdiFileSeek(
  @return Zero to indicate success.  This is speculation since I haven't found
          this documented, but it appears to work.
  */
-INT DIAMONDAPI
+DWORD DIAMONDAPI
 YoriLibCabFciFileDelete(
     __in LPSTR FileName,
     __inout_opt PINT Err,
@@ -1056,6 +964,10 @@ YoriLibCabNotify(
                 YoriLibFreeStringContents(&FileName);
             }
             return 1;
+        case YoriLibCabNotifyNextCabinet:
+            if (Notification->FdiError != 0) {
+                return (DWORD_PTR)-1;
+            }
     }
     return 0;
 }

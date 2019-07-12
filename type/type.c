@@ -3,7 +3,7 @@
  *
  * Yori shell display file contents
  *
- * Copyright (c) 2017-2018 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,10 +35,11 @@ CHAR strTypeHelpText[] =
         "\n"
         "Output the contents of one or more files.\n"
         "\n"
-        "TYPE [-license] [-b] [-s] [-h <num>] [<file>...]\n"
+        "TYPE [-license] [-b] [-s] [-h <num>] [-n] [<file>...]\n"
         "\n"
         "   -b             Use basic search criteria for files only\n"
         "   -h <num>       Display <num> lines from the beginning of each file\n"
+        "   -n             Display line numbers\n"
         "   -s             Process files from all subdirectories\n";
 
 /**
@@ -47,7 +48,7 @@ CHAR strTypeHelpText[] =
 BOOL
 TypeHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Type %i.%i\n"), TYPE_VER_MAJOR, TYPE_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Type %i.%02i\n"), TYPE_VER_MAJOR, TYPE_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -61,6 +62,16 @@ TypeHelp()
 typedef struct _TYPE_CONTEXT {
 
     /**
+     TRUE to indicate that files are being enumerated recursively.
+     */
+    BOOL Recursive;
+
+    /**
+     TRUE to indicate that line numbers should be displayed.
+     */
+    BOOL DisplayLineNumbers;
+
+    /**
      Specifies the number of lines from the top of each file to display.
      */
     ULONG HeadLines;
@@ -69,6 +80,12 @@ typedef struct _TYPE_CONTEXT {
      Records the total number of files processed.
      */
     LONGLONG FilesFound;
+
+    /**
+     Records the total number of files processed for this command line
+     argument.
+     */
+    LONGLONG FilesFoundThisArg;
 
     /**
      Records the number of lines found from a specific file.
@@ -97,11 +114,23 @@ TypeProcessStream(
     PVOID LineContext = NULL;
     CONSOLE_SCREEN_BUFFER_INFO ScreenInfo;
     YORI_STRING LineString;
+    BOOL OutputIsConsole;
+    DWORD dwMode;
+    DWORD CharactersDisplayed;
+    HANDLE OutputHandle;
+
+    OutputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 
     YoriLibInitEmptyString(&LineString);
 
     TypeContext->FilesFound++;
+    TypeContext->FilesFoundThisArg++;
     TypeContext->FileLinesFound = 0;
+
+    OutputIsConsole = FALSE;
+    if (GetConsoleMode(OutputHandle, &dwMode)) {
+        OutputIsConsole = TRUE;
+    }
 
     while (TRUE) {
 
@@ -112,8 +141,18 @@ TypeProcessStream(
         TypeContext->FileLinesFound++;
 
         if ((TypeContext->HeadLines == 0 || TypeContext->FileLinesFound <= TypeContext->HeadLines)) {
-            YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%y"), &LineString);
-            if (LineString.LengthInChars == 0 || !GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &ScreenInfo) || ScreenInfo.dwCursorPosition.X != 0) {
+            if (TypeContext->DisplayLineNumbers) {
+                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%8lli: %y"), TypeContext->FileLinesFound, &LineString);
+                CharactersDisplayed = LineString.LengthInChars + 10;
+            } else {
+                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%y"), &LineString);
+                CharactersDisplayed = LineString.LengthInChars;
+            }
+            if (CharactersDisplayed == 0 ||
+                !OutputIsConsole ||
+                !GetConsoleScreenBufferInfo(OutputHandle, &ScreenInfo) ||
+                ScreenInfo.dwCursorPosition.X != 0) {
+
                 YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("\n"));
             }
         } else {
@@ -133,11 +172,12 @@ TypeProcessStream(
 
  @param FilePath Pointer to the file path that was found.
 
- @param FileInfo Information about the file.
+ @param FileInfo Information about the file.  This can be NULL if the file
+        was not found by enumeration.
 
  @param Depth Specifies recursion depth.  Ignored in this application.
 
- @param TypeContext Pointer to the type context structure indicating the
+ @param Context Pointer to the type context structure indicating the
         action to perform and populated with the file and line count found.
 
  @return TRUE to continute enumerating, FALSE to abort.
@@ -145,18 +185,21 @@ TypeProcessStream(
 BOOL
 TypeFileFoundCallback(
     __in PYORI_STRING FilePath,
-    __in PWIN32_FIND_DATA FileInfo,
+    __in_opt PWIN32_FIND_DATA FileInfo,
     __in DWORD Depth,
-    __in PTYPE_CONTEXT TypeContext
+    __in PVOID Context
     )
 {
     HANDLE FileHandle;
+    PTYPE_CONTEXT TypeContext = (PTYPE_CONTEXT)Context;
 
     UNREFERENCED_PARAMETER(Depth);
 
-    ASSERT(FilePath->StartOfString[FilePath->LengthInChars] == '\0');
+    ASSERT(YoriLibIsStringNullTerminated(FilePath));
 
-    if ((FileInfo->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+    if (FileInfo == NULL ||
+        (FileInfo->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+
         FileHandle = CreateFile(FilePath->StartOfString,
                                 GENERIC_READ,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -180,6 +223,67 @@ TypeFileFoundCallback(
 
     return TRUE;
 }
+
+/**
+ A callback that is invoked when a directory cannot be successfully enumerated.
+
+ @param FilePath Pointer to the file path that could not be enumerated.
+
+ @param ErrorCode The Win32 error code describing the failure.
+
+ @param Depth Recursion depth, ignored in this application.
+
+ @param Context Pointer to the context block indicating whether the
+        enumeration was recursive.  Recursive enumerates do not complain
+        if a matching file is not in every single directory, because
+        common usage expects files to be in a subset of directories only.
+
+ @return TRUE to continute enumerating, FALSE to abort.
+ */
+BOOL
+TypeFileEnumerateErrorCallback(
+    __in PYORI_STRING FilePath,
+    __in DWORD ErrorCode,
+    __in DWORD Depth,
+    __in PVOID Context
+    )
+{
+    YORI_STRING UnescapedFilePath;
+    BOOL Result = FALSE;
+    PTYPE_CONTEXT TypeContext = (PTYPE_CONTEXT)Context;
+
+    UNREFERENCED_PARAMETER(Depth);
+
+    YoriLibInitEmptyString(&UnescapedFilePath);
+    if (!YoriLibUnescapePath(FilePath, &UnescapedFilePath)) {
+        UnescapedFilePath.StartOfString = FilePath->StartOfString;
+        UnescapedFilePath.LengthInChars = FilePath->LengthInChars;
+    }
+
+    if (ErrorCode == ERROR_FILE_NOT_FOUND || ErrorCode == ERROR_PATH_NOT_FOUND) {
+        if (!TypeContext->Recursive) {
+            YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("File or directory not found: %y\n"), &UnescapedFilePath);
+        }
+        Result = TRUE;
+    } else {
+        LPTSTR ErrText = YoriLibGetWinErrorText(ErrorCode);
+        YORI_STRING DirName;
+        LPTSTR FilePart;
+        YoriLibInitEmptyString(&DirName);
+        DirName.StartOfString = UnescapedFilePath.StartOfString;
+        FilePart = YoriLibFindRightMostCharacter(&UnescapedFilePath, '\\');
+        if (FilePart != NULL) {
+            DirName.LengthInChars = (DWORD)(FilePart - DirName.StartOfString);
+        } else {
+            DirName.LengthInChars = UnescapedFilePath.LengthInChars;
+        }
+        YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("Enumerate of %y failed: %s"), &DirName, ErrText);
+        YoriLibFreeWinErrorText(ErrText);
+    }
+    YoriLibFreeStringContents(&UnescapedFilePath);
+    return Result;
+}
+
 
 #ifdef YORI_BUILTIN
 /**
@@ -212,7 +316,6 @@ ENTRYPOINT(
     DWORD i;
     DWORD StartArg = 0;
     DWORD MatchFlags;
-    BOOL Recursive = FALSE;
     BOOL BasicEnumeration = FALSE;
     TYPE_CONTEXT TypeContext;
     YORI_STRING Arg;
@@ -229,7 +332,7 @@ ENTRYPOINT(
                 TypeHelp();
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("license")) == 0) {
-                YoriLibDisplayMitLicense(_T("2017-2018"));
+                YoriLibDisplayMitLicense(_T("2017-2019"));
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("b")) == 0) {
                 BasicEnumeration = TRUE;
@@ -240,20 +343,41 @@ ENTRYPOINT(
                     LONGLONG HeadLines = 0;
                     YoriLibStringToNumber(&ArgV[i + 1], TRUE, &HeadLines, &CharsConsumed);
 
-                    //
-                    //  Hack to allow "head -50" to mean "positive 50"
-                    //
+                    if (CharsConsumed == 0) {
 
-                    if (HeadLines < 0) {
-                        HeadLines = HeadLines * -1;
+                        //
+                        //  If it's not numeric, assume it's a file name.
+                        //  Default to 10 lines, and don't advance the
+                        //  argument.
+                        //
+
+                        TypeContext.HeadLines = 10;
+                        ArgumentUnderstood = TRUE;
+
+                    } else {
+
+                        //
+                        //  Hack to allow "head -50" to mean "positive 50"
+                        //
+
+                        if (HeadLines < 0) {
+                            HeadLines = HeadLines * -1;
+                        }
+                        TypeContext.HeadLines = (ULONG)HeadLines;
+                        ArgumentUnderstood = TRUE;
+                        i++;
                     }
-                    TypeContext.HeadLines = (ULONG)HeadLines;
-                    ArgumentUnderstood = TRUE;
-                    i++;
                 }
-            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("s")) == 0) {
-                Recursive = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("n")) == 0) {
+                TypeContext.DisplayLineNumbers = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("s")) == 0) {
+                TypeContext.Recursive = TRUE;
+                ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                StartArg = i + 1;
+                ArgumentUnderstood = TRUE;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -266,15 +390,17 @@ ENTRYPOINT(
         }
     }
 
+#if YORI_BUILTIN
+    YoriLibCancelEnable();
+#endif
+
     //
     //  If no file name is specified, use stdin; otherwise open
     //  the file and use that
     //
 
-    if (StartArg == 0) {
-        DWORD FileType = GetFileType(GetStdHandle(STD_INPUT_HANDLE));
-        FileType = FileType & ~(FILE_TYPE_REMOTE);
-        if (FileType == FILE_TYPE_CHAR) {
+    if (StartArg == 0 || StartArg == ArgC) {
+        if (YoriLibIsStdInConsole()) {
             YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("No file or pipe for input\n"));
             return EXIT_FAILURE;
         }
@@ -282,16 +408,32 @@ ENTRYPOINT(
         TypeProcessStream(GetStdHandle(STD_INPUT_HANDLE), &TypeContext);
     } else {
         MatchFlags = YORILIB_FILEENUM_RETURN_FILES | YORILIB_FILEENUM_DIRECTORY_CONTENTS;
-        if (Recursive) {
+        if (TypeContext.Recursive) {
             MatchFlags |= YORILIB_FILEENUM_RECURSE_BEFORE_RETURN | YORILIB_FILEENUM_RECURSE_PRESERVE_WILD;
         }
         if (BasicEnumeration) {
             MatchFlags |= YORILIB_FILEENUM_BASIC_EXPANSION;
         }
-    
+
         for (i = StartArg; i < ArgC; i++) {
-    
-            YoriLibForEachFile(&ArgV[i], MatchFlags, 0, TypeFileFoundCallback, &TypeContext);
+
+            TypeContext.FilesFoundThisArg = 0;
+
+            YoriLibForEachStream(&ArgV[i],
+                                 MatchFlags,
+                                 0,
+                                 TypeFileFoundCallback,
+                                 TypeFileEnumerateErrorCallback,
+                                 &TypeContext);
+
+            if (TypeContext.FilesFoundThisArg == 0) {
+                YORI_STRING FullPath;
+                YoriLibInitEmptyString(&FullPath);
+                if (YoriLibUserStringToSingleFilePath(&ArgV[i], TRUE, &FullPath)) {
+                    TypeFileFoundCallback(&FullPath, NULL, 0, &TypeContext);
+                    YoriLibFreeStringContents(&FullPath);
+                }
+            }
         }
     }
 

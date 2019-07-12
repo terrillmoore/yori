@@ -3,7 +3,7 @@
  *
  * Yori shell structures header file
  *
- * Copyright (c) 2017-2018 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -97,6 +97,14 @@ typedef struct _YORI_SH_SINGLE_EXEC_CONTEXT {
     struct _YORI_SH_SINGLE_EXEC_CONTEXT * NextProgram;
 
     /**
+     Reference count.  This structure should not be cleaned up or deallocated
+     until this reaches zero.  Synchronized via Interlock.  Note that while
+     an exec context is part of an exec plan, a reference is held from the
+     plan.
+     */
+    DWORD ReferenceCount;
+
+    /**
      Specifies the type of the next program and the conditions under which
      it should execute.
      */
@@ -140,7 +148,8 @@ typedef struct _YORI_SH_SINGLE_EXEC_CONTEXT {
         StdOutTypeAppend = 3,
         StdOutTypeNull = 4,
         StdOutTypePipe = 5,
-        StdOutTypeBuffer = 6
+        StdOutTypeBuffer = 6,
+        StdOutTypeStdErr = 7
     } StdOutType;
 
     /**
@@ -230,11 +239,6 @@ typedef struct _YORI_SH_SINGLE_EXEC_CONTEXT {
     /**
      TRUE if the program should be executed on a different console to the
      one the user is operating on.
-
-     MSFIX This can't really be a property of an individual command, it has
-     to be a property of the set; but if it is, we need a subshell to do the
-     work because a single process can only be associated with a single
-     console.
      */
     BOOLEAN RunOnSecondConsole;
 
@@ -257,6 +261,14 @@ typedef struct _YORI_SH_SINGLE_EXEC_CONTEXT {
      process.
      */
     BOOLEAN SuppressTaskCompletion;
+
+    /**
+     Set to TRUE to indicate that the debug pump thread has completed
+     processing.  This is currently only used for debugging, because the
+     debug pump thread is still running at the point of the final dereference,
+     even though it has completed processing debug messages.
+     */
+    BOOLEAN DebugPumpThreadFinished;
 
 } YORI_SH_SINGLE_EXEC_CONTEXT, *PYORI_SH_SINGLE_EXEC_CONTEXT;
 
@@ -286,7 +298,13 @@ typedef struct _YORI_SH_PREVIOUS_REDIRECT_CONTEXT {
      TRUE if stdout and stderr have been modified to refer to the same
      location.
      */
-    BOOLEAN StdErrAndOutSame;
+    BOOLEAN StdErrRedirectsToStdOut;
+
+    /**
+     TRUE if stdout and stderr have been modified to refer to the same
+     location.
+     */
+    BOOLEAN StdOutRedirectsToStdErr;
 
     /**
      A handle to the original stdin.
@@ -361,16 +379,6 @@ typedef struct _YORI_SH_HISTORY_ENTRY {
      */
     YORI_STRING CmdLine;
 } YORI_SH_HISTORY_ENTRY, *PYORI_SH_HISTORY_ENTRY;
-
-/**
- List of command history.
- */
-extern YORI_LIST_ENTRY YoriShCommandHistory;
-
-/**
- Number of elements in command history.
- */
-extern DWORD YoriShCommandHistoryCount;
 
 /**
  Information about a single tab complete match.
@@ -475,6 +483,16 @@ typedef struct _YORI_SH_TAB_COMPLETE_CONTEXT {
 typedef struct _YORI_SH_INPUT_BUFFER {
 
     /**
+     Handle to standard input when it's a console.
+     */
+    HANDLE ConsoleInputHandle;
+
+    /**
+     Handle to standard output when it's a console.
+     */
+    HANDLE ConsoleOutputHandle;
+
+    /**
      Pointer to a string containing the text as being entered by the user.
      */
     YORI_STRING String;
@@ -549,25 +567,26 @@ typedef struct _YORI_SH_INPUT_BUFFER {
     DWORD PreviousMouseButtonState;
 
     /**
+     The tick count when the window was last made active, or zero if a
+     window activation has not been observed since this input line began.
+     */
+    DWORD WindowActivatedTick;
+
+    /**
+     The tick count when the selection was started, or zero if no selection
+     has been started.
+     */
+    DWORD SelectionStartedTick;
+
+    /**
      Description of the current selected region.
      */
     YORILIB_SELECTION Selection;
 
     /**
-     Delay before suggesting values in milliseconds.
+     Description of the current mouseover region.
      */
-    DWORD DelayBeforeSuggesting;
-
-    /**
-     Minimum number of characters in an arg before suggesting.
-     */
-    DWORD MinimumCharsInArgBeforeSuggesting;
-
-    /**
-     Set to TRUE to disable the console's quickedit before inputting
-     commands and enable it before executing them.
-     */
-    BOOL YoriQuickEdit;
+    YORILIB_SELECTION Mouseover;
 
     /**
      Extra information specific to tab completion processing.
@@ -638,7 +657,7 @@ typedef struct _YORI_SH_DEFAULT_ALIAS_ENTRY {
     LPTSTR Value;
 } YORI_SH_DEFAULT_ALIAS_ENTRY, *PYORI_SH_DEFAULT_ALIAS_ENTRY;
 
-extern YORI_SH_DEFAULT_ALIAS_ENTRY YoriShDefaultAliasEntries[];
+extern CONST YORI_SH_DEFAULT_ALIAS_ENTRY YoriShDefaultAliasEntries[];
 
 /**
  A structure containing information about a currently loaded DLL.
@@ -706,17 +725,145 @@ typedef struct _YORI_SH_BUILTIN_CALLBACK {
 
 } YORI_SH_BUILTIN_CALLBACK, *PYORI_SH_BUILTIN_CALLBACK;
 
+
 /**
- The exit code ("error level") of the previous process to complete.
+ A structure containing state that is global across the Yori shell process.
  */
-extern DWORD g_ErrorLevel;
+typedef struct _YORI_SH_GLOBALS {
 
-extern DWORD g_PreviousJobId;
+    /**
+     The exit code ("error level") of the previous process to complete.
+     */
+    DWORD ErrorLevel;
 
-extern BOOL g_ExitProcess;
+    /**
+     When ExitProcess is set to TRUE, this is set to the code that the shell
+     should return as its exit code.
+     */
+    DWORD ExitProcessExitCode;
 
-extern DWORD g_ExitProcessExitCode;
+    /**
+     The most recent Job ID that was assigned.
+    */
+    DWORD PreviousJobId;
 
-extern YORI_LIST_ENTRY YoriShBuiltinCallbacks;
+    /**
+     Count of recursion depth.  This is incremented when calling a builtin
+     or when the shell is invoked from a subshell, and decremented when
+     these return.  A recursion depth of zero implies a shell ready for user
+     interaction.
+     */
+    DWORD RecursionDepth;
+
+    /**
+     Count of prompt recursion depth.  This is the number of characters to
+     display when $+$ is used.
+     */
+    DWORD PromptRecursionDepth;
+
+    /**
+     The current revision number of the environment variables in the process.
+     This is incremented whenever a change occurs to the environment which
+     may imply that cached state about shell behavior needs to be reloaded.
+     */
+    DWORD EnvironmentGeneration;
+
+    /**
+     The number of ms to wait before suggesting the completion to a command.
+     */
+    DWORD DelayBeforeSuggesting;
+
+    /**
+     The minimum number of characters that the user must enter before
+     suggestions occur.
+     */
+    DWORD MinimumCharsInArgBeforeSuggesting;
+
+    /**
+     The generation of the environment last time input parameters were
+     refreshed.
+     */
+    DWORD InputParamsGeneration;
+
+    /**
+     List of command history.
+     */
+    YORI_LIST_ENTRY CommandHistory;
+
+    /**
+     List of builtin callbacks currently registered with Yori.
+     */
+    YORI_LIST_ENTRY BuiltinCallbacks;
+
+    /**
+     The contents of the YORIPROMPT environment variable.
+     */
+    YORI_STRING PromptVariable;
+
+    /**
+     The generation of the environment at the time the variable was queried.
+     */
+    DWORD PromptGeneration;
+
+    /**
+     The contents of the YORITITLE environment variable.
+     */
+    YORI_STRING TitleVariable;
+
+    /**
+     The generation of the environment at the time the variable was queried.
+     */
+    DWORD TitleGeneration;
+
+    /**
+     When set to TRUE, the process should end rather than seek another
+     command.
+     */
+    BOOLEAN ExitProcess;
+
+    /**
+     When set to TRUE, indicates this process has been spawned as a subshell
+     to execute builtin commands from a monolithic shell.
+     */
+    BOOLEAN SubShell;
+
+    /**
+     Set to TRUE once the process has initialized COM.
+     */
+    BOOLEAN InitializedCom;
+
+    /**
+     Set to TRUE if the process has set the taskbar button to any non-default
+     state.
+     */
+    BOOLEAN TaskUiActive;
+
+    /**
+     Set to TRUE to ignore any task UI state updates.  This is set when
+     executing programs as part of the prompt or title, since they're not
+     tasks the user is really waiting on.
+     */
+    BOOLEAN SuppressTaskUi;
+
+    /**
+     Set to TRUE to disable the console's quickedit before inputting
+     commands and enable it before executing them.
+     */
+    BOOLEAN YoriQuickEdit;
+
+    /**
+     TRUE if mouseover support is enabled, FALSE if it is disabled.  Note this
+     is currently enabled by default.
+     */
+    BOOL MouseoverEnabled;
+
+    /**
+     The Win32 color to use when changing text color due to a mouse over.
+     */
+    WORD MouseoverColor;
+
+} YORI_SH_GLOBALS, *PYORI_SH_GLOBALS;
+
+extern YORI_SH_GLOBALS YoriShGlobal;
 
 // vim:sw=4:ts=4:et:

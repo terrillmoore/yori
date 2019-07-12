@@ -35,12 +35,13 @@ CHAR strTouchHelpText[] =
         "\n"
         "Create files or update timestamps.\n"
         "\n"
-        "TOUCH [-license] [-a] [-b] [-c] [-f size] [-s] [-t <date and time>]\n"
+        "TOUCH [-license] [-a] [-b] [-c] [-e] [-f size] [-s] [-t <date and time>]\n"
         "      [-w] <file>...\n"
         "\n"
         "   -a             Update last access time\n"
         "   -b             Use basic search criteria for files only\n"
         "   -c             Update create time\n"
+        "   -e             Only update existing files\n"
         "   -f             Create new file with specified file size\n"
         "   -s             Process files from all subdirectories\n"
         "   -t             Specify the timestamp to set\n"
@@ -52,7 +53,7 @@ CHAR strTouchHelpText[] =
 BOOL
 TouchHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Touch %i.%i\n"), TOUCH_VER_MAJOR, TOUCH_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Touch %i.%02i\n"), TOUCH_VER_MAJOR, TOUCH_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -90,6 +91,12 @@ typedef struct _TOUCH_CONTEXT {
      the program assumes the request is to create a new file.
      */
     ULONG FilesFoundThisArg;
+
+    /**
+     If TRUE, only existing files should be modified, and no new files should
+     be created.
+     */
+    BOOL ExistingOnly;
 
 } TOUCH_CONTEXT, *PTOUCH_CONTEXT;
 
@@ -135,7 +142,7 @@ TouchFileFoundCallback(
                             DesiredAccess,
                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                             NULL,
-                            OPEN_ALWAYS,
+                            TouchContext->ExistingOnly?OPEN_EXISTING:OPEN_ALWAYS,
                             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS,
                             NULL);
 
@@ -248,6 +255,9 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("c")) == 0) {
                 UpdateCreationTime = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("e")) == 0) {
+                TouchContext.ExistingOnly = TRUE;
+                ArgumentUnderstood = TRUE;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("f")) == 0) {
                 if (i + 1 < ArgC) {
                     TouchContext.NewFileSize = YoriLibStringToFileSize(&ArgV[i + 1]);
@@ -274,6 +284,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("w")) == 0) {
                 UpdateWriteTime = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                StartArg = i + 1;
+                ArgumentUnderstood = TRUE;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -316,7 +330,7 @@ ENTRYPOINT(
     //  the file and use that
     //
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("touch: missing argument\n"));
         return EXIT_FAILURE;
     } else {
@@ -331,7 +345,7 @@ ENTRYPOINT(
         for (i = StartArg; i < ArgC; i++) {
 
             TouchContext.FilesFoundThisArg = 0;
-            YoriLibForEachFile(&ArgV[i], MatchFlags, 0, TouchFileFoundCallback, &TouchContext);
+            YoriLibForEachFile(&ArgV[i], MatchFlags, 0, TouchFileFoundCallback, NULL, &TouchContext);
             if (TouchContext.FilesFoundThisArg == 0) {
                 YORI_STRING FullPath;
                 YoriLibInitEmptyString(&FullPath);

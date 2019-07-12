@@ -67,7 +67,16 @@ typedef struct _YORI_LIB_LINE_READ_CONTEXT {
      matters because it defines the form of the newlines that this module is
      looking for.
      */
-    BOOL ReadWChars;
+    BOOLEAN ReadWChars;
+
+    /**
+     If TRUE, the operation has been terminated for some reason, and future
+     operations should fail.  This exists because the operation may terminate
+     but successfully return the trailing portion of a buffer, and the
+     enumerator can be invoked again even though a previous call determined
+     no further processing should occur.
+     */
+    BOOLEAN Terminated;
 
 } YORI_LIB_LINE_READ_CONTEXT, *PYORI_LIB_LINE_READ_CONTEXT;
 
@@ -252,8 +261,12 @@ YoriLibReadLineToStringEx(
         } else {
             ReadContext->ReadWChars = FALSE;
         }
+        ReadContext->Terminated = FALSE;
     } else {
         ReadContext = *Context;
+        if (ReadContext->Terminated) {
+            return NULL;
+        }
     }
 
     //
@@ -262,13 +275,14 @@ YoriLibReadLineToStringEx(
 
     if (ReadContext->PreviousBuffer == NULL) {
         ReadContext->LengthOfBuffer = UserString->LengthAllocated;
-        if (ReadContext->LengthOfBuffer < 16 * 1024) {
-            ReadContext->LengthOfBuffer = 16 * 1024;
+        if (ReadContext->LengthOfBuffer < 256 * 1024) {
+            ReadContext->LengthOfBuffer = 256 * 1024;
         }
         ReadContext->PreviousBuffer = YoriLibMalloc(ReadContext->LengthOfBuffer);
         if (ReadContext->PreviousBuffer == NULL) {
             UserString->LengthInChars = 0;
             *LineTerminated = FALSE;
+            ReadContext->Terminated = TRUE;
             return NULL;
         }
     }
@@ -326,13 +340,14 @@ YoriLibReadLineToStringEx(
                         } else {
                             UserString->LengthInChars = 0;
                             *LineTerminated = FALSE;
+                            ReadContext->Terminated = TRUE;
                             return NULL;
                         }
                     }
                 }
             }
         } else {
-            PCHAR Buffer = YoriLibAddToPointer(ReadContext->PreviousBuffer, ReadContext->CurrentBufferOffset);
+            PUCHAR Buffer = YoriLibAddToPointer(ReadContext->PreviousBuffer, ReadContext->CurrentBufferOffset);
             CharsRemaining = ReadContext->BytesInBuffer - ReadContext->CurrentBufferOffset;
             for (Count = 0; Count < CharsRemaining; Count++) {
 
@@ -364,7 +379,7 @@ YoriLibReadLineToStringEx(
                                 CharsToCopy -= CharsToSkip;
                             }
                         }
-                        if (YoriLibCopyLineToUserBufferW(UserString, &Buffer[CharsToSkip], CharsToCopy)) {
+                        if (YoriLibCopyLineToUserBufferW(UserString, (LPSTR)&Buffer[CharsToSkip], CharsToCopy)) {
                             ReadContext->CurrentBufferOffset += Count;
                             ReadContext->LinesRead++;
                             *LineTerminated = TRUE;
@@ -372,6 +387,7 @@ YoriLibReadLineToStringEx(
                         } else {
                             UserString->LengthInChars = 0;
                             *LineTerminated = FALSE;
+                            ReadContext->Terminated = TRUE;
                             return NULL;
                         }
                     }
@@ -400,6 +416,7 @@ YoriLibReadLineToStringEx(
         if (ReadContext->LengthOfBuffer == ReadContext->BytesInBuffer) {
             UserString->LengthInChars = 0;
             *LineTerminated = FALSE;
+            ReadContext->Terminated = TRUE;
             return NULL;
         }
 
@@ -427,7 +444,7 @@ YoriLibReadLineToStringEx(
         //
 
         CumulativeDelay = 0;
-        DelayTime = 10;
+        DelayTime = 1;
         TerminateProcessing = FALSE;
         while(TRUE) {
             DWORD BytesAvailable;
@@ -443,9 +460,8 @@ YoriLibReadLineToStringEx(
 
             WaitResult = WaitForMultipleObjects(HandleCount, HandleArray, FALSE, INFINITE);
             if (WaitResult == WAIT_OBJECT_0 && HandleCount > 1) {
-                UserString->LengthInChars = 0;
-                *LineTerminated = FALSE;
-                return NULL;
+                TerminateProcessing = TRUE;
+                break;
             }
 
             if (FileType != FILE_TYPE_PIPE) {
@@ -453,9 +469,8 @@ YoriLibReadLineToStringEx(
             }
 
             if (!PeekNamedPipe(FileHandle, NULL, 0, NULL, &BytesAvailable, NULL)) {
-                UserString->LengthInChars = 0;
-                *LineTerminated = FALSE;
-                return NULL;
+                TerminateProcessing = TRUE;
+                break;
             }
 
             if (BytesAvailable > 0) {
@@ -496,7 +511,20 @@ YoriLibReadLineToStringEx(
             if (!ReadFile(FileHandle, YoriLibAddToPointer(ReadContext->PreviousBuffer, ReadContext->BytesInBuffer), ReadContext->LengthOfBuffer - ReadContext->BytesInBuffer, &BytesRead, NULL)) {
 #if DBG
                 DWORD LastError = GetLastError();
-                ASSERT(LastError == ERROR_BROKEN_PIPE || LastError == ERROR_NO_DATA || LastError == ERROR_HANDLE_EOF);
+
+                //
+                //  Most of these indicate the source has gone away or ended.
+                //  ERROR_INVALID_PARAMETER happens when we're trying to
+                //  perform an unaligned read on a noncached handle, which
+                //  is crazy, but Windows will silently allow cached opens to
+                //  devices to be noncached opens, which inconveniently means
+                //  the detection of the problem happens later than it should.
+                //
+
+                ASSERT(LastError == ERROR_BROKEN_PIPE ||
+                       LastError == ERROR_NO_DATA ||
+                       LastError == ERROR_HANDLE_EOF ||
+                       LastError == ERROR_INVALID_PARAMETER);
 #endif
                 TerminateProcessing = TRUE;
             }
@@ -508,6 +536,7 @@ YoriLibReadLineToStringEx(
         }
 
         if (TerminateProcessing) {
+            ReadContext->Terminated = TRUE;
             if (ReadContext->BytesInBuffer > 0 && ReturnFinalNonTerminatedLine) {
 
                 //

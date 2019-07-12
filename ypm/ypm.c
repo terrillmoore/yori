@@ -3,7 +3,7 @@
  *
  * Yori shell update tool
  *
- * Copyright (c) 2018 Malcolm J. Smith
+ * Copyright (c) 2018-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -37,14 +37,24 @@ CHAR strYpmHelpText[] =
         "Installs or upgrades packages.\n"
         "\n"
         "YPM [-license]\n"
-        "YPM -c <file> <pkgname> <version> <arch> -filelist <file> [-upgradepath <path>]\n"
-        "       [-sourcepath <path>] [-symbolpath <path>] [-replaces <packages>]\n"
+        "YPM -c <file> <pkgname> <version> <arch> -filelist <file>\n"
+        "       [-minimumosbuild <number>] [-packagepathforolderbuilds <path>]\n"
+        "       [-upgradepath <path>] [-sourcepath <path>] [-symbolpath <path>]\n"
+        "       [-replaces <packages>]\n"
         "YPM -cs <file> <pkgname> <version> -filepath <directory>\n"
         "YPM -d <pkg>\n"
         "YPM -i <file>\n"
         "YPM -l\n"
+        "YPM -lv\n"
+        "YPM -md <source>\n"
+        "YPM -mi <source> <target>\n"
+        "YPM -ml\n"
         "YPM -ri [-a <arch>] [-v <version>] <pkgname>...\n"
         "YPM -rl\n"
+        "YPM -rsa <server>\n"
+        "YPM -rsd <server>\n"
+        "YPM -rsi <server>\n"
+        "YPM -rsl\n"
         "YPM -src [<pkg>]\n"
         "YPM -sym [<pkg>]\n"
         "YPM [-a <arch>] -u [<pkg>]\n"
@@ -55,8 +65,16 @@ CHAR strYpmHelpText[] =
         "   -d             Delete an installed package\n"
         "   -i             Install a package from a specified file or URL\n"
         "   -l             List all currently installed packages\n"
+        "   -lv            List all currently installed packages verbosely\n"
+        "   -md            Delete a mirror\n"
+        "   -mi            Install a new mirror\n"
+        "   -ml            List mirrors\n"
         "   -ri            Install packages from remote servers\n"
         "   -rl            List available packages on remote servers\n"
+        "   -rsa           Install a new remote server as the last server\n"
+        "   -rsd           Delete a remote server\n"
+        "   -rsi           Install a new remote server as the first server\n"
+        "   -rsl           List remote servers\n"
         "   -src           Install source for specified package or all packages\n"
         "   -sym           Install debug symbols for specified package or all packages\n"
         "   -u             Upgrade a package or all currently installed packages\n";
@@ -67,7 +85,7 @@ CHAR strYpmHelpText[] =
 BOOL
 YpmHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ypm %i.%i\n"), YPM_VER_MAJOR, YPM_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ypm %i.%02i\n"), YPM_VER_MAJOR, YPM_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -89,7 +107,15 @@ typedef enum _YPM_OPERATION {
     YpmOpRemoteList = 7,
     YpmOpInstallRemote = 8,
     YpmOpInstallSource = 9,
-    YpmOpInstallSymbol = 10
+    YpmOpInstallSymbol = 10,
+    YpmOpRemoteSourcesList = 11,
+    YpmOpRemoteSourceInstallFirst = 12,
+    YpmOpRemoteSourceInstallLast = 13,
+    YpmOpRemoteSourceDelete = 14,
+    YpmOpMirrorsList = 15,
+    YpmOpMirrorInstall = 16,
+    YpmOpMirrorDelete = 17,
+    YpmOpListPackagesVerbose = 18,
 } YPM_OPERATION;
 
 #ifdef YORI_BUILTIN
@@ -134,6 +160,10 @@ ENTRYPOINT(
     PYORI_STRING FileList = NULL;
     PYORI_STRING FilePath = NULL;
     PYORI_STRING Replaces = NULL;
+    PYORI_STRING MirrorSource = NULL;
+    PYORI_STRING MirrorTarget = NULL;
+    PYORI_STRING MinimumOSBuild = NULL;
+    PYORI_STRING PackagePathForOlderBuilds = NULL;
     DWORD ReplaceCount = 0;
     YPM_OPERATION Op;
 
@@ -150,7 +180,7 @@ ENTRYPOINT(
                 YpmHelp();
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("license")) == 0) {
-                YoriLibDisplayMitLicense(_T("2017-2018"));
+                YoriLibDisplayMitLicense(_T("2017-2019"));
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("a")) == 0) {
                 if (i + 1 < ArgC) {
@@ -198,6 +228,44 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("l")) == 0) {
                 Op = YpmOpListPackages;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("lv")) == 0) {
+                Op = YpmOpListPackagesVerbose;
+                ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("md")) == 0) {
+                if (i + 1 < ArgC) {
+                    Op = YpmOpMirrorDelete;
+                    MirrorSource = &ArgV[i + 1];
+                    i++;
+                    ArgumentUnderstood = TRUE;
+                }
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("mi")) == 0) {
+                if (i + 2 < ArgC) {
+                    Op = YpmOpMirrorInstall;
+                    MirrorSource = &ArgV[i + 1];
+                    MirrorTarget = &ArgV[i + 2];
+                    i++;
+                    ArgumentUnderstood = TRUE;
+                }
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("minimumosbuild")) == 0) {
+                if (Op == YpmOpCreateBinaryPackage &&
+                    i + 1 < ArgC) {
+
+                    MinimumOSBuild = &ArgV[i + 1];
+                    ArgumentUnderstood = TRUE;
+                    i++;
+                }
+
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("ml")) == 0) {
+                Op = YpmOpMirrorsList;
+                ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("packagepathforolderbuilds")) == 0) {
+                if (Op == YpmOpCreateBinaryPackage &&
+                    i + 1 < ArgC) {
+
+                    PackagePathForOlderBuilds = &ArgV[i + 1];
+                    ArgumentUnderstood = TRUE;
+                    i++;
+                }
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("replaces")) == 0) {
                 if (Op == YpmOpCreateBinaryPackage &&
                     i + 1 < ArgC) {
@@ -217,6 +285,30 @@ ENTRYPOINT(
                 ArgumentUnderstood = TRUE;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("rl")) == 0) {
                 Op = YpmOpRemoteList;
+                ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("rsa")) == 0) {
+                if (i + 1 < ArgC) {
+                    Op = YpmOpRemoteSourceInstallLast;
+                    SourcePath = &ArgV[i + 1];
+                    i++;
+                    ArgumentUnderstood = TRUE;
+                }
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("rsd")) == 0) {
+                if (i + 1 < ArgC) {
+                    Op = YpmOpRemoteSourceDelete;
+                    SourcePath = &ArgV[i + 1];
+                    i++;
+                    ArgumentUnderstood = TRUE;
+                }
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("rsi")) == 0) {
+                if (i + 1 < ArgC) {
+                    Op = YpmOpRemoteSourceInstallFirst;
+                    SourcePath = &ArgV[i + 1];
+                    i++;
+                    ArgumentUnderstood = TRUE;
+                }
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("rsl")) == 0) {
+                Op = YpmOpRemoteSourcesList;
                 ArgumentUnderstood = TRUE;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("sourcepath")) == 0) {
                 if (i + 1 < ArgC) {
@@ -279,11 +371,13 @@ ENTRYPOINT(
         }
 
         for (i = StartArg; i < ArgC; i++) {
-            YoriPkgInstallPackage(&ArgV[i], NULL);
+            YoriPkgInstallSinglePackage(&ArgV[i], NULL);
         }
 
     } else if (Op == YpmOpListPackages) {
-        YoriPkgListInstalledPackages();
+        YoriPkgListInstalledPackages(FALSE);
+    } else if (Op == YpmOpListPackagesVerbose) {
+        YoriPkgListInstalledPackages(TRUE);
     } else if (Op == YpmOpUpgradeInstalled) {
         if (StartArg == 0 || StartArg >= ArgC) {
             YoriPkgUpgradeInstalledPackages(NewArch);
@@ -307,7 +401,18 @@ ENTRYPOINT(
             YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("ypm: missing file list\n"));
             return EXIT_FAILURE;
         }
-        YoriPkgCreateBinaryPackage(NewFileName, NewName, NewVersion, NewArch, FileList, UpgradePath, SourcePath, SymbolPath, Replaces, ReplaceCount);
+        YoriPkgCreateBinaryPackage(NewFileName,
+                                   NewName,
+                                   NewVersion,
+                                   NewArch,
+                                   FileList,
+                                   MinimumOSBuild,
+                                   PackagePathForOlderBuilds,
+                                   UpgradePath,
+                                   SourcePath,
+                                   SymbolPath,
+                                   Replaces,
+                                   ReplaceCount);
     } else if (Op == YpmOpCreateSourcePackage) {
         ASSERT(NewFileName != NULL && NewName != NULL && NewVersion != NULL);
         if (FilePath == NULL) {
@@ -315,18 +420,30 @@ ENTRYPOINT(
             return EXIT_FAILURE;
         }
         YoriPkgCreateSourcePackage(NewFileName, NewName, NewVersion, FilePath);
+    } else if (Op == YpmOpMirrorDelete) {
+        YoriPkgDeleteMirror(MirrorSource);
+    } else if (Op == YpmOpMirrorInstall) {
+        YoriPkgAddNewMirror(MirrorSource, MirrorTarget, TRUE);
+    } else if (Op == YpmOpMirrorsList) {
+        YoriPkgDisplayMirrors();
     } else if (Op == YpmOpRemoteList) {
         YoriPkgDisplayAvailableRemotePackages();
+    } else if (Op == YpmOpRemoteSourceDelete) {
+        YoriPkgDeleteSource(SourcePath);
+    } else if (Op == YpmOpRemoteSourceInstallFirst) {
+        YoriPkgAddNewSource(SourcePath, TRUE);
+    } else if (Op == YpmOpRemoteSourceInstallLast) {
+        YoriPkgAddNewSource(SourcePath, FALSE);
+    } else if (Op == YpmOpRemoteSourcesList) {
+        YoriPkgDisplaySources();
     } else if (Op == YpmOpInstallRemote) {
         DWORD PkgCount;
-        DWORD SuccessCount;
         PkgCount = ArgC - StartArg;
-        if (PkgCount == 0) {
+        if (StartArg == 0 || PkgCount == 0) {
             YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("ypm: missing package name\n"));
             return EXIT_FAILURE;
         }
-        SuccessCount = YoriPkgInstallRemotePackages(&ArgV[StartArg], PkgCount, NULL, NewVersion, NewArch);
-        YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%i packages installed (%i not installed)\n"), SuccessCount, PkgCount - SuccessCount);
+        YoriPkgInstallRemotePackages(&ArgV[StartArg], PkgCount, NULL, NewVersion, NewArch);
     } else if (Op == YpmOpInstallSource) {
         if (StartArg == 0 || StartArg >= ArgC) {
             YoriPkgInstallSourceForInstalledPackages();

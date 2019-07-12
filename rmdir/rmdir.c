@@ -3,7 +3,7 @@
  *
  * Yori shell rmdir
  *
- * Copyright (c) 2017-2018 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -48,7 +48,7 @@ CHAR strRmdirHelpText[] =
 BOOL
 RmdirHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Rmdir %i.%i\n"), RMDIR_VER_MAJOR, RMDIR_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Rmdir %i.%02i\n"), RMDIR_VER_MAJOR, RMDIR_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -87,7 +87,7 @@ RmdirFileFoundCallback(
     __in PYORI_STRING FilePath,
     __in PWIN32_FIND_DATA FileInfo,
     __in DWORD Depth,
-    __in PRMDIR_CONTEXT Context
+    __in PVOID Context
     )
 {
     DWORD Err = NO_ERROR;
@@ -95,10 +95,11 @@ RmdirFileFoundCallback(
     DWORD OldAttributes;
     DWORD NewAttributes;
     BOOL FileDeleted;
+    PRMDIR_CONTEXT RmdirContext = (PRMDIR_CONTEXT)Context;
 
     UNREFERENCED_PARAMETER(Depth);
 
-    ASSERT(FilePath->StartOfString[FilePath->LengthInChars] == '\0');
+    ASSERT(YoriLibIsStringNullTerminated(FilePath));
 
     FileDeleted = FALSE;
 
@@ -106,7 +107,7 @@ RmdirFileFoundCallback(
     //  Try to delete it.
     //
 
-    if (Context->RecycleBin) {
+    if (RmdirContext->RecycleBin) {
         if (YoriLibRecycleBinFile(FilePath)) {
             FileDeleted = TRUE;
         }
@@ -173,6 +174,64 @@ RmdirFileFoundCallback(
     return TRUE;
 }
 
+/**
+ A callback that is invoked when a directory cannot be successfully enumerated.
+
+ @param FilePath Pointer to the file path that could not be enumerated.
+
+ @param ErrorCode The Win32 error code describing the failure.
+
+ @param Depth Recursion depth, ignored in this application.
+
+ @param Context Context, ignored in this function.
+
+ @return TRUE to continute enumerating, FALSE to abort.
+ */
+BOOL
+RmdirFileEnumerateErrorCallback(
+    __in PYORI_STRING FilePath,
+    __in DWORD ErrorCode,
+    __in DWORD Depth,
+    __in PVOID Context
+    )
+{
+    YORI_STRING UnescapedFilePath;
+    BOOL Result = FALSE;
+
+    UNREFERENCED_PARAMETER(Depth);
+    UNREFERENCED_PARAMETER(Context);
+
+    YoriLibInitEmptyString(&UnescapedFilePath);
+    if (!YoriLibUnescapePath(FilePath, &UnescapedFilePath)) {
+        UnescapedFilePath.StartOfString = FilePath->StartOfString;
+        UnescapedFilePath.LengthInChars = FilePath->LengthInChars;
+    }
+
+    if (ErrorCode == ERROR_FILE_NOT_FOUND || ErrorCode == ERROR_PATH_NOT_FOUND) {
+        if (Depth == 0) {
+            YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("File or directory not found: %y\n"), &UnescapedFilePath);
+        }
+        Result = TRUE;
+    } else {
+        LPTSTR ErrText = YoriLibGetWinErrorText(ErrorCode);
+        YORI_STRING DirName;
+        LPTSTR FilePart;
+        YoriLibInitEmptyString(&DirName);
+        DirName.StartOfString = UnescapedFilePath.StartOfString;
+        FilePart = YoriLibFindRightMostCharacter(&UnescapedFilePath, '\\');
+        if (FilePart != NULL) {
+            DirName.LengthInChars = (DWORD)(FilePart - DirName.StartOfString);
+        } else {
+            DirName.LengthInChars = UnescapedFilePath.LengthInChars;
+        }
+        YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("Enumerate of %y failed: %s"), &DirName, ErrText);
+        YoriLibFreeWinErrorText(ErrText);
+    }
+    YoriLibFreeStringContents(&UnescapedFilePath);
+    return Result;
+}
+
+
 #ifdef YORI_BUILTIN
 /**
  The main entrypoint for the rmdir builtin command.
@@ -227,7 +286,7 @@ ENTRYPOINT(
                 RmdirHelp();
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("license")) == 0) {
-                YoriLibDisplayMitLicense(_T("2017-2018"));
+                YoriLibDisplayMitLicense(_T("2017-2019"));
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("b")) == 0) {
                 BasicEnumeration = TRUE;
@@ -246,6 +305,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("s/q")) == 0) {
                 Recursive = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                StartArg = i + 1;
+                ArgumentUnderstood = TRUE;
+                break;
             }
 
         } else {
@@ -259,7 +322,7 @@ ENTRYPOINT(
         }
     }
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("rmdir: missing argument\n"));
         return EXIT_FAILURE;
     }
@@ -276,7 +339,12 @@ ENTRYPOINT(
     }
 
     for (i = StartArg; i < ArgC; i++) {
-        YoriLibForEachFile(&ArgV[i], MatchFlags, 0, RmdirFileFoundCallback, &RmdirContext);
+        YoriLibForEachFile(&ArgV[i],
+                           MatchFlags,
+                           0,
+                           RmdirFileFoundCallback,
+                           RmdirFileEnumerateErrorCallback,
+                           &RmdirContext);
     }
 
     return EXIT_SUCCESS;

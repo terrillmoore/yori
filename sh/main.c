@@ -3,7 +3,7 @@
  *
  * Yori shell entrypoint
  *
- * Copyright (c) 2017 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,24 +26,10 @@
 
 #include "yori.h"
 
-DWORD g_ErrorLevel;
-
 /**
- When set to TRUE, the process should end rather than seek another
- command.
+ Mutable state that is global across the shell process.
  */
-BOOL g_ExitProcess;
-
-/**
- When g_ExitProcess is set to TRUE, this is set to the code that the shell
- should return as its exit code.
- */
-DWORD g_ExitProcessExitCode;
-
-/**
- A function pointer that can be used to enable or disable WOW64 redirection.
- */
-typedef BOOL (WINAPI * DISABLE_WOW_REDIRECT_FN)(PVOID*);
+YORI_SH_GLOBALS YoriShGlobal;
 
 /**
  Help text to display to the user.
@@ -65,11 +51,70 @@ CHAR strHelpText[] =
 BOOL
 YoriShHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Yori %i.%i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Yori %i.%02i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%hs"), strHelpText);
+    return TRUE;
+}
+
+/**
+ A callback function for every file found in the YoriInit.d directory.
+
+ @param Filename Pointer to the fully qualified file name to execute.
+
+ @param FileInfo Pointer to information about the file.  Ignored in this
+        function.
+
+ @param Depth The recursion depth.  Ignored in this function.
+
+ @param Context Pointer to context.  Ignored in this function.
+
+ @return TRUE to continue enumerating, FALSE to terminate.
+ */
+BOOL
+YoriShExecuteYoriInit(
+    __in PYORI_STRING Filename,
+    __in PWIN32_FIND_DATA FileInfo,
+    __in DWORD Depth,
+    __in PVOID Context
+    )
+{
+    YORI_STRING InitNameWithQuotes;
+    LPTSTR szExt;
+    YORI_STRING UnescapedPath;
+    PYORI_STRING NameToUse;
+
+    UNREFERENCED_PARAMETER(FileInfo);
+    UNREFERENCED_PARAMETER(Depth);
+    UNREFERENCED_PARAMETER(Context);
+
+    YoriLibInitEmptyString(&UnescapedPath);
+    NameToUse = Filename;
+    szExt = YoriLibFindRightMostCharacter(Filename, '.');
+    if (szExt != NULL) {
+        YORI_STRING YsExt;
+
+        YoriLibInitEmptyString(&YsExt);
+        YsExt.StartOfString = szExt;
+        YsExt.LengthInChars = Filename->LengthInChars - (DWORD)(szExt - Filename->StartOfString);
+        if (YoriLibCompareStringWithLiteralInsensitive(&YsExt, _T(".cmd")) == 0 ||
+            YoriLibCompareStringWithLiteralInsensitive(&YsExt, _T(".bat")) == 0) {
+
+            if (YoriLibUnescapePath(Filename, &UnescapedPath)) {
+                NameToUse = &UnescapedPath;
+            }
+        }
+    }
+
+    YoriLibInitEmptyString(&InitNameWithQuotes);
+    YoriLibYPrintf(&InitNameWithQuotes, _T("\"%y\""), NameToUse);
+    if (InitNameWithQuotes.LengthInChars > 0) {
+        YoriShExecuteExpression(&InitNameWithQuotes);
+    }
+    YoriLibFreeStringContents(&InitNameWithQuotes);
+    YoriLibFreeStringContents(&UnescapedPath);
     return TRUE;
 }
 
@@ -83,7 +128,6 @@ YoriShInit()
     TCHAR Letter;
     TCHAR AliasName[3];
     TCHAR AliasValue[16];
-    DWORD Count;
     YORI_SH_BUILTIN_NAME_MAPPING CONST *BuiltinNameMapping = YoriShBuiltins;
 
     //
@@ -106,7 +150,7 @@ YoriShInit()
     //  the console directly, use VT color; otherwise, default to monochrome.
     //
 
-    if (YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORIPROMPT"), NULL, 0) == 0) {
+    if (YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORIPROMPT"), NULL, 0, NULL) == 0) {
         DWORD ConsoleMode;
         if (GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &ConsoleMode)) {
             SetEnvironmentVariable(_T("YORIPROMPT"), _T("$E$[35;1m$P$$E$[0m$G_OR_ADMIN_G$"));
@@ -116,11 +160,49 @@ YoriShInit()
     }
 
     //
+    //  If we don't have defined break characters, set them to the default.
+    //  This allows the user to see the current set and manipulate them.
+    //
+
+    if (YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORIQUICKEDITBREAKCHARS"), NULL, 0, NULL) == 0) {
+        YORI_STRING BreakChars;
+        YORI_STRING ExpandedBreakChars;
+        YoriLibGetSelectionDoubleClickBreakChars(&BreakChars);
+        if (YoriLibAllocateString(&ExpandedBreakChars, BreakChars.LengthInChars * 7)) {
+            DWORD ReadIndex;
+            DWORD WriteIndex;
+            YORI_STRING Substring;
+
+            WriteIndex = 0;
+            YoriLibInitEmptyString(&Substring);
+            for (ReadIndex = 0; ReadIndex < BreakChars.LengthInChars; ReadIndex++) {
+                Substring.StartOfString = &ExpandedBreakChars.StartOfString[WriteIndex];
+                Substring.LengthAllocated = ExpandedBreakChars.LengthAllocated - WriteIndex;
+                if (BreakChars.StartOfString[ReadIndex] <= 0xFF) {
+                    Substring.LengthInChars = YoriLibSPrintf(Substring.StartOfString, _T("0x%02x,"), BreakChars.StartOfString[ReadIndex]);
+                } else {
+                    Substring.LengthInChars = YoriLibSPrintf(Substring.StartOfString, _T("0x%04x,"), BreakChars.StartOfString[ReadIndex]);
+                }
+
+                WriteIndex += Substring.LengthInChars;
+            }
+
+            if (WriteIndex > 0) {
+                WriteIndex--;
+                ExpandedBreakChars.StartOfString[WriteIndex] = '\0';
+            }
+            SetEnvironmentVariable(_T("YORIQUICKEDITBREAKCHARS"), ExpandedBreakChars.StartOfString);
+            YoriLibFreeStringContents(&ExpandedBreakChars);
+        }
+        YoriLibFreeStringContents(&BreakChars);
+    }
+
+    //
     //  If we're running Yori and don't have a YORISPEC, assume this is the
     //  path to the shell the user wants to keep using.
     //
 
-    if (YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORISPEC"), NULL, 0) == 0) {
+    if (YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORISPEC"), NULL, 0, NULL) == 0) {
         YORI_STRING ModuleName;
 
         //
@@ -146,7 +228,7 @@ YoriShInit()
             }
         }
 
-        if (YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORICOMPLETEPATH"), NULL, 0) == 0) {
+        if (YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORICOMPLETEPATH"), NULL, 0, NULL) == 0) {
             YORI_STRING CompletePath;
 
             if (YoriLibAllocateString(&CompletePath, ModuleName.LengthInChars + sizeof("\\completion"))) {
@@ -163,7 +245,7 @@ YoriShInit()
     //  Add .YS1 to PATHEXT if it's not there already.
     //
 
-    if (YoriShGetEnvironmentVariableWithoutSubstitution(_T("PATHEXT"), NULL, 0) == 0) {
+    if (YoriShGetEnvironmentVariableWithoutSubstitution(_T("PATHEXT"), NULL, 0, NULL) == 0) {
         SetEnvironmentVariable(_T("PATHEXT"), _T(".YS1;.COM;.EXE;.CMD;.BAT"));
     } else {
         YORI_STRING NewExt;
@@ -178,9 +260,7 @@ YoriShInit()
     //  Register any builtin aliases, including drive letter colon commands.
     //
 
-    for (Count = 0; Count < YoriShDefaultAliasEntriesCount(); Count++) {
-        YoriShAddAliasLiteral(YoriShDefaultAliasEntries[Count].Alias, YoriShDefaultAliasEntries[Count].Value, TRUE);
-    }
+    YoriShRegisterDefaultAliases();
 
     AliasName[1] = ':';
     AliasName[2] = '\0';
@@ -200,6 +280,43 @@ YoriShInit()
 
     YoriShLoadSystemAliases(TRUE);
     YoriShLoadSystemAliases(FALSE);
+
+    return TRUE;
+}
+
+/**
+ Execute any system or user init scripts.
+
+ @return TRUE to indicate success.
+ */
+BOOL
+YoriShExecuteInitScripts()
+{
+    YORI_STRING RelativeYoriInitName;
+
+    //
+    //  Execute all system YoriInit scripts.
+    //
+
+    YoriLibConstantString(&RelativeYoriInitName, _T("~AppDir\\YoriInit.d\\*"));
+    YoriLibForEachFile(&RelativeYoriInitName, YORILIB_FILEENUM_RETURN_FILES, 0, YoriShExecuteYoriInit, NULL, NULL);
+    YoriLibConstantString(&RelativeYoriInitName, _T("~AppDir\\YoriInit*"));
+    YoriLibForEachFile(&RelativeYoriInitName, YORILIB_FILEENUM_RETURN_FILES, 0, YoriShExecuteYoriInit, NULL, NULL);
+
+    //
+    //  Execute all user YoriInit scripts.
+    //
+
+    YoriLibConstantString(&RelativeYoriInitName, _T("~\\YoriInit.d\\*"));
+    YoriLibForEachFile(&RelativeYoriInitName, YORILIB_FILEENUM_RETURN_FILES, 0, YoriShExecuteYoriInit, NULL, NULL);
+    YoriLibConstantString(&RelativeYoriInitName, _T("~\\YoriInit*"));
+    YoriLibForEachFile(&RelativeYoriInitName, YORILIB_FILEENUM_RETURN_FILES, 0, YoriShExecuteYoriInit, NULL, NULL);
+
+    //
+    //  Reload any state next time it's requested.
+    //
+
+    YoriShGlobal.EnvironmentGeneration++;
 
     return TRUE;
 }
@@ -231,6 +348,7 @@ YoriShParseArgs(
     DWORD StartArgToExec = 0;
     DWORD i;
     YORI_STRING Arg;
+    BOOL ExecuteStartupScripts = TRUE;
 
     *TerminateApp = FALSE;
 
@@ -245,7 +363,7 @@ YoriShParseArgs(
                 *TerminateApp = TRUE;
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("license")) == 0) {
-                YoriLibDisplayMitLicense(_T("2017-2018"));
+                YoriLibDisplayMitLicense(_T("2017-2019"));
                 *TerminateApp = TRUE;
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("c")) == 0) {
@@ -267,11 +385,15 @@ YoriShParseArgs(
                     YoriShLoadSavedRestartState(&ArgV[i + 1]);
                     YoriShDiscardSavedRestartState(&ArgV[i + 1]);
                     i++;
+                    ExecuteStartupScripts = FALSE;
                     ArgumentUnderstood = TRUE;
                     break;
                 }
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("ss")) == 0) {
                 if (ArgC > i + 1) {
+                    YoriShGlobal.RecursionDepth++;
+                    YoriShGlobal.SubShell = TRUE;
+                    ExecuteStartupScripts = FALSE;
                     *TerminateApp = TRUE;
                     StartArgToExec = i + 1;
                     ArgumentUnderstood = TRUE;
@@ -285,13 +407,17 @@ YoriShParseArgs(
         }
     }
 
+    if (ExecuteStartupScripts) {
+        YoriShExecuteInitScripts();
+    }
+
     if (StartArgToExec > 0) {
         YORI_STRING YsCmdToExec;
 
         if (YoriLibBuildCmdlineFromArgcArgv(ArgC - StartArgToExec, &ArgV[StartArgToExec], TRUE, &YsCmdToExec)) {
             if (YsCmdToExec.LengthInChars > 0) {
                 if (YoriShExecuteExpression(&YsCmdToExec)) {
-                    *ExitCode = g_ErrorLevel;
+                    *ExitCode = YoriShGlobal.ErrorLevel;
                 } else {
                     *ExitCode = EXIT_FAILURE;
                 }
@@ -302,6 +428,18 @@ YoriShParseArgs(
 
     return TRUE;
 }
+
+#if YORI_BUILD_ID
+/**
+ The number of days before suggesting the user upgrade on a testing build.
+ */
+#define YORI_SH_DAYS_BEFORE_WARNING (40)
+#else
+/**
+ The number of days before suggesting the user upgrade on a release build.
+ */
+#define YORI_SH_DAYS_BEFORE_WARNING (120)
+#endif
 
 /**
  If the user hasn't suppressed warning displays, display warnings for the age
@@ -315,14 +453,14 @@ YoriShDisplayWarnings()
     DWORD EnvVarLength;
     YORI_STRING ModuleName;
 
-    EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORINOWARNINGS"), NULL, 0);
+    EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORINOWARNINGS"), NULL, 0, NULL);
     if (EnvVarLength > 0) {
         YORI_STRING NoWarningsVar;
         if (!YoriLibAllocateString(&NoWarningsVar, EnvVarLength + 1)) {
             return FALSE;
         }
 
-        NoWarningsVar.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORINOWARNINGS"), NoWarningsVar.StartOfString, NoWarningsVar.LengthAllocated);
+        NoWarningsVar.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORINOWARNINGS"), NoWarningsVar.StartOfString, NoWarningsVar.LengthAllocated, NULL);
         if (EnvVarLength < NoWarningsVar.LengthAllocated &&
             YoriLibCompareStringWithLiteral(&NoWarningsVar, _T("1")) == 0) {
 
@@ -376,9 +514,28 @@ YoriShDisplayWarnings()
             liWriteTime.QuadPart = liWriteTime.QuadPart / (60 * 60 * 24);
 
             if (liNow.QuadPart > liWriteTime.QuadPart &&
-                liWriteTime.QuadPart + 120 < liNow.QuadPart) {
+                liWriteTime.QuadPart + YORI_SH_DAYS_BEFORE_WARNING < liNow.QuadPart) {
 
-                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Warning: This build of Yori is %lli days old.  Run ypm -u to upgrade."), liNow.QuadPart - liWriteTime.QuadPart);
+                DWORD DaysOld;
+                DWORD UnitToDisplay;
+                LPTSTR UnitLabel;
+
+                DaysOld = (DWORD)(liNow.QuadPart - liWriteTime.QuadPart);
+                if (DaysOld > 2 * 365) {
+                    UnitToDisplay = DaysOld / 365;
+                    UnitLabel = _T("years");
+                } else if (DaysOld > 3 * 30) {
+                    UnitToDisplay = DaysOld / 30;
+                    UnitLabel = _T("months");
+                } else {
+                    UnitToDisplay = DaysOld;
+                    UnitLabel = _T("days");
+                }
+
+                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT,
+                              _T("Warning: This build of Yori is %i %s old.  Run ypm -u to upgrade.\n"),
+                              UnitToDisplay,
+                              UnitLabel);
             }
         }
     }
@@ -405,10 +562,31 @@ YoriShPostCommand()
     HANDLE ConsoleHandle;
     BOOL ConsoleMode;
 
+    //
+    //  This will only do anything if this process has already set the state
+    //  previously.
+    //
+
+    if (YoriShGlobal.ErrorLevel == 0) {
+        YoriShSetWindowState(YORI_SH_TASK_SUCCESS);
+    } else {
+        YoriShSetWindowState(YORI_SH_TASK_FAILED);
+    }
+
     ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 
     ConsoleMode = GetConsoleScreenBufferInfo(ConsoleHandle, &ScreenInfo);
     if (ConsoleMode)  {
+
+        //
+        //  Old versions will fail and ignore any call that contains a flag
+        //  they don't understand, so attempt a lowest common denominator
+        //  setting and try to upgrade it, which might fail.
+        //
+
+        SetConsoleMode(ConsoleHandle, ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT);
+        SetConsoleMode(ConsoleHandle, ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+
         YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%c[0m"), 27);
         if (ScreenInfo.srWindow.Left > 0) {
             SHORT CharsToMoveLeft;
@@ -464,7 +642,7 @@ ymain (
     BOOL TerminateApp = FALSE;
 
     YoriShInit();
-    YoriShParseArgs(ArgC, ArgV, &TerminateApp, &g_ExitProcessExitCode);
+    YoriShParseArgs(ArgC, ArgV, &TerminateApp, &YoriShGlobal.ExitProcessExitCode);
 
     if (!TerminateApp) {
 
@@ -476,7 +654,7 @@ ymain (
             YoriShPostCommand();
             YoriShScanJobsReportCompletion(FALSE);
             YoriShScanProcessBuffersForTeardown(FALSE);
-            if (g_ExitProcess) {
+            if (YoriShGlobal.ExitProcess) {
                 break;
             }
             YoriShPreCommand();
@@ -485,7 +663,7 @@ ymain (
             if (!YoriShGetExpression(&CurrentExpression)) {
                 break;
             }
-            if (g_ExitProcess) {
+            if (YoriShGlobal.ExitProcess) {
                 break;
             }
             if (CurrentExpression.LengthInChars > 0) {
@@ -504,8 +682,10 @@ ymain (
     YoriShBuiltinUnregisterAll();
     YoriShDiscardSavedRestartState(NULL);
     YoriShCleanupInputContext();
+    YoriLibFreeStringContents(&YoriShGlobal.PromptVariable);
+    YoriLibFreeStringContents(&YoriShGlobal.TitleVariable);
 
-    return g_ExitProcessExitCode;
+    return YoriShGlobal.ExitProcessExitCode;
 }
 
 // vim:sw=4:ts=4:et:

@@ -1,7 +1,7 @@
 /**
  * @file lib/fileenum.c
  *
- * Yori file enumeration manipulation routines
+ * Yori file enumeration routines
  *
  * Copyright (c) 2017-2018 Malcolm J. Smith
  *
@@ -104,6 +104,10 @@ typedef struct _YORILIB_FOREACHFILE_CONTEXT {
 
  @param Callback The callback to invoke on each match.
 
+ @param ErrorCallback Optionally points to a function to invoke if a
+        directory cannot be enumerated.  If NULL, the caller does not care
+        about failures and wants to silently continue.
+
  @param Context Caller provided context to pass to the callback.
  */
 BOOL
@@ -112,6 +116,7 @@ YoriLibForEachFileEnum(
     __in DWORD MatchFlags,
     __in DWORD Depth,
     __in PYORILIB_FILE_ENUM_FN Callback,
+    __in_opt PYORILIB_FILE_ENUM_ERROR_FN ErrorCallback,
     __in PVOID Context
     )
 {
@@ -138,10 +143,17 @@ YoriLibForEachFileEnum(
     YoriLibInitEmptyString(&ForEachContext->RecurseCriteria);
 
     //
-    //  Check if there are home paths to expand
+    //  This is currently only needed for the GetFileAttributes call.  It may
+    //  be possible to relax this, possibly allocating within this routine if
+    //  it's really necessary.
     //
 
     ASSERT(YoriLibIsStringNullTerminated(FileSpec));
+
+    //
+    //  Check if there are home paths to expand
+    //
+
     YoriLibInitEmptyString(&ForEachContext->EffectiveFileSpec);
     ForEachContext->EffectiveFileSpec.StartOfString = FileSpec->StartOfString;
     ForEachContext->EffectiveFileSpec.LengthInChars = FileSpec->LengthInChars;
@@ -336,9 +348,34 @@ YoriLibForEachFileEnum(
                 ForEachContext->FullPath.LengthInChars = YoriLibSPrintfS(ForEachContext->FullPath.StartOfString, ForEachContext->FullPath.LengthAllocated, _T("%y\\%y"), &ForEachContext->ParentFullPath, &ForEachContext->EffectiveFileSpec);
             }
             hFind = FindFirstFile(ForEachContext->FullPath.StartOfString, &ForEachContext->FileInfo);
+
+            //
+            //  If we can't enumerate it because it's a volume root, cook up
+            //  the data by hand and set hFind to NULL to indicate that the
+            //  enumeration sort of worked.
+            //
+
+            if (hFind == INVALID_HANDLE_VALUE) {
+                if ((ForEachContext->FullPath.LengthInChars == 3 && YoriLibIsDriveLetterWithColonAndSlash(&ForEachContext->FullPath)) ||
+                    (ForEachContext->FullPath.LengthInChars == 7 && YoriLibIsPrefixedDriveLetterWithColonAndSlash(&ForEachContext->FullPath))) {
+
+                    if (YoriLibUpdateFindDataFromFileInformation(&ForEachContext->FileInfo, ForEachContext->FullPath.StartOfString, FALSE)) {
+                        ForEachContext->FileInfo.cFileName[0] = '\0';
+                        ForEachContext->FileInfo.cAlternateFileName[0] = '\0';
+                        hFind = NULL;
+                    }
+                }
+            }
         }
 
-        if (hFind != INVALID_HANDLE_VALUE) {
+        if (hFind == INVALID_HANDLE_VALUE) {
+            if (ErrorCallback != NULL) {
+                if (!ErrorCallback(&ForEachContext->FullPath, GetLastError(), Depth, Context)) {
+                    Result = FALSE;
+                }
+                break;
+            }
+        } else {
             do {
 
                 ReportObject = TRUE;
@@ -445,7 +482,7 @@ YoriLibForEachFileEnum(
                         ForEachContext->RecurseCriteria.StartOfString[ForEachContext->RecurseCriteria.LengthInChars] = '\0';
                     }
 
-                    if (!YoriLibForEachFileEnum(&ForEachContext->RecurseCriteria, MatchFlags, Depth + 1, Callback, Context)) {
+                    if (!YoriLibForEachFileEnum(&ForEachContext->RecurseCriteria, MatchFlags, Depth + 1, Callback, ErrorCallback, Context)) {
                         Result = FALSE;
                         break;
                     }
@@ -471,13 +508,20 @@ YoriLibForEachFileEnum(
                         Result = FALSE;
                         break;
                     }
+
+                    if (YoriLibIsOperationCancelled()) {
+                        Result = FALSE;
+                        break;
+                    }
                 }
 
-            } while (FindNextFile(hFind, &ForEachContext->FileInfo));
+            } while (hFind != INVALID_HANDLE_VALUE && hFind != NULL && FindNextFile(hFind, &ForEachContext->FileInfo));
 
             YoriLibFreeStringContents(&ForEachContext->RecurseCriteria);
 
-            FindClose(hFind);
+            if (hFind != NULL && hFind != INVALID_HANDLE_VALUE) {
+                FindClose(hFind);
+            }
 
             if (Result == FALSE) {
                 break;
@@ -508,6 +552,10 @@ YoriLibForEachFileEnum(
 
  @param Callback The callback to invoke on each match.
 
+ @param ErrorCallback Optionally points to a function to invoke if a
+        directory cannot be enumerated.  If NULL, the caller does not care
+        about failures and wants to silently continue.
+
  @param Context Caller provided context to pass to the callback.
 
  @return TRUE to indicate success, FALSE to indicate failure.
@@ -518,6 +566,7 @@ YoriLibForEachFile(
     __in DWORD MatchFlags,
     __in DWORD Depth,
     __in PYORILIB_FILE_ENUM_FN Callback,
+    __in_opt PYORILIB_FILE_ENUM_ERROR_FN ErrorCallback,
     __in PVOID Context
     )
 {
@@ -530,7 +579,7 @@ YoriLibForEachFile(
     BOOL SingleCharMode;
 
     if (MatchFlags & YORILIB_FILEENUM_BASIC_EXPANSION) {
-        return YoriLibForEachFileEnum(FileSpec, MatchFlags, Depth, Callback, Context);
+        return YoriLibForEachFileEnum(FileSpec, MatchFlags, Depth, Callback, ErrorCallback, Context);
     }
 
     SingleCharMode = FALSE;
@@ -543,16 +592,14 @@ YoriLibForEachFile(
 
     if (CharsToOperator == FileSpec->LengthInChars) {
 
-        ASSERT(YoriLibIsStringNullTerminated(FileSpec));
-
         if (YoriLibExpandHomeDirectories(FileSpec, &NewFileSpec)) {
             BOOL Result;
-            Result = YoriLibForEachFileEnum(&NewFileSpec, MatchFlags, Depth, Callback, Context);
+            Result = YoriLibForEachFileEnum(&NewFileSpec, MatchFlags, Depth, Callback, ErrorCallback, Context);
             YoriLibFreeStringContents(&NewFileSpec);
             return Result;
         }
 
-        return YoriLibForEachFileEnum(FileSpec, MatchFlags, Depth, Callback, Context);
+        return YoriLibForEachFileEnum(FileSpec, MatchFlags, Depth, Callback, ErrorCallback, Context);
     }
 
     YoriLibInitEmptyString(&BeforeOperator);
@@ -571,7 +618,7 @@ YoriLibForEachFile(
 
     CharsToOperator = YoriLibCountStringNotContainingChars(&SubstituteValues, SingleCharMode?_T("]"):_T("}"));
     if (CharsToOperator == SubstituteValues.LengthInChars) {
-        return YoriLibForEachFileEnum(FileSpec, MatchFlags, Depth, Callback, Context);
+        return YoriLibForEachFileEnum(FileSpec, MatchFlags, Depth, Callback, ErrorCallback, Context);
     }
 
     AfterOperator.StartOfString = &SubstituteValues.StartOfString[CharsToOperator + 1];
@@ -591,7 +638,7 @@ YoriLibForEachFile(
 
             YoriLibYPrintf(&NewFileSpec, _T("%y%y%y"), &BeforeOperator, &MatchValue, &AfterOperator);
 
-            if (!YoriLibForEachFile(&NewFileSpec, MatchFlags, Depth, Callback, Context)) {
+            if (!YoriLibForEachFile(&NewFileSpec, MatchFlags, Depth, Callback, ErrorCallback, Context)) {
                 YoriLibFreeStringContents(&NewFileSpec);
                 return FALSE;
             }
@@ -618,7 +665,7 @@ YoriLibForEachFile(
 
             YoriLibYPrintf(&NewFileSpec, _T("%y%y%y"), &BeforeOperator, &MatchValue, &AfterOperator);
 
-            if (!YoriLibForEachFile(&NewFileSpec, MatchFlags, Depth, Callback, Context)) {
+            if (!YoriLibForEachFile(&NewFileSpec, MatchFlags, Depth, Callback, ErrorCallback, Context)) {
                 YoriLibFreeStringContents(&NewFileSpec);
                 return FALSE;
             }
@@ -747,5 +794,66 @@ YoriLibDoesFileMatchExpression (
     return FALSE;
 }
 
+/**
+ Generate information typically returned from a directory enumeration by
+ opening the file and querying information from it.  This is used for named
+ streams which do not go through a regular file enumeration.
+
+ @param FindData On successful completion, populated with information 
+        typically returned by the system when enumerating files.
+
+ @param FullPath Pointer to a NULL terminate string referring to the full
+        path to the file.
+
+ @param CopyName TRUE if the full path's file name component should also be
+        copied into the find data structure.  FALSE if the caller does not
+        need this or will do it manually.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriLibUpdateFindDataFromFileInformation (
+    __out PWIN32_FIND_DATA FindData,
+    __in LPTSTR FullPath,
+    __in BOOL CopyName
+    )
+{
+    HANDLE hFile;
+    BY_HANDLE_FILE_INFORMATION FileInfo;
+    LPTSTR FinalSlash;
+
+    hFile = CreateFile(FullPath,
+                       FILE_READ_ATTRIBUTES,
+                       FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+                       NULL,
+                       OPEN_EXISTING,
+                       FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT|FILE_FLAG_OPEN_NO_RECALL,
+                       NULL);
+
+    if (hFile != INVALID_HANDLE_VALUE) {
+
+        GetFileInformationByHandle(hFile, &FileInfo);
+
+        FindData->dwFileAttributes = FileInfo.dwFileAttributes;
+        FindData->ftCreationTime = FileInfo.ftCreationTime;
+        FindData->ftLastAccessTime = FileInfo.ftLastAccessTime;
+        FindData->ftLastWriteTime = FileInfo.ftLastWriteTime;
+        FindData->nFileSizeHigh = FileInfo.nFileSizeHigh;
+        FindData->nFileSizeLow  = FileInfo.nFileSizeLow;
+
+        CloseHandle(hFile);
+
+        if (CopyName) {
+            FinalSlash = _tcsrchr(FullPath, '\\');
+            if (FinalSlash) {
+                YoriLibSPrintfS(FindData->cFileName, MAX_PATH, _T("%s"), FinalSlash + 1);
+            } else {
+                YoriLibSPrintfS(FindData->cFileName, MAX_PATH, _T("%s"), FullPath);
+            }
+        }
+        return TRUE;
+    }
+    return FALSE;
+}
 
 // vim:sw=4:ts=4:et:

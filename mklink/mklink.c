@@ -48,7 +48,7 @@ CHAR strMklinkHelpText[] =
 BOOL
 MklinkHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Mklink %i.%i\n"), MKLINK_VER_MAJOR, MKLINK_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Mklink %i.%02i\n"), MKLINK_VER_MAJOR, MKLINK_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -344,6 +344,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("j")) == 0) {
                 LinkType = MklinkLinkTypeJunction;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                StartArg = i + 1;
+                ArgumentUnderstood = TRUE;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -356,8 +360,7 @@ ENTRYPOINT(
         }
     }
 
-    i = StartArg;
-    if (ArgC - StartArg < 2) {
+    if (StartArg == 0 || ArgC - StartArg < 2) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("mklink: missing argument\n"));
         return EXIT_FAILURE;
     }

@@ -3,7 +3,7 @@
  *
  * Yori shell create packages
  *
- * Copyright (c) 2018 Malcolm J. Smith
+ * Copyright (c) 2018-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,7 +26,7 @@
 
 #include <yoripch.h>
 #include <yorilib.h>
-#include "yoripkg.h"
+#include "yoripkgp.h"
 
 /**
  Creates a binary (installable) package.  This could be architecture specific
@@ -43,6 +43,13 @@
  @param FileListFile A pointer to a file name whose contents describe the list
         of files that should be included in the package.  This file contains
         one file per line, no wildcards.
+
+ @param MinimumOSBuild Optionally points to a string containing the minimum
+        build of Windows required to install the package.
+
+ @param PackagePathForOlderBuilds Optionally points to a PackageName for use
+        when installing on OS builds below MinimumOSBuild.  If MinimumOSBuild
+        is not specified, this value is meaningless.
 
  @param UpgradePath Optionally points to a URL to upgrade to the latest
         version of the package from.  If not specified, no UpgradePath is
@@ -70,6 +77,8 @@ YoriPkgCreateBinaryPackage(
     __in PYORI_STRING Version,
     __in PYORI_STRING Architecture,
     __in PYORI_STRING FileListFile,
+    __in_opt PYORI_STRING MinimumOSBuild,
+    __in_opt PYORI_STRING PackagePathForOlderBuilds,
     __in_opt PYORI_STRING UpgradePath,
     __in_opt PYORI_STRING SourcePath,
     __in_opt PYORI_STRING SymbolPath,
@@ -119,6 +128,12 @@ YoriPkgCreateBinaryPackage(
     WritePrivateProfileString(_T("Package"), _T("Name"), PackageName->StartOfString, TempFile.StartOfString);
     WritePrivateProfileString(_T("Package"), _T("Architecture"), Architecture->StartOfString, TempFile.StartOfString);
     WritePrivateProfileString(_T("Package"), _T("Version"), Version->StartOfString, TempFile.StartOfString);
+    if (MinimumOSBuild != NULL) {
+        WritePrivateProfileString(_T("Package"), _T("MinimumOSBuild"), MinimumOSBuild->StartOfString, TempFile.StartOfString);
+        if (PackagePathForOlderBuilds != NULL) {
+            WritePrivateProfileString(_T("Package"), _T("PackagePathForOlderBuilds"), PackagePathForOlderBuilds->StartOfString, TempFile.StartOfString);
+        }
+    }
     if (UpgradePath != NULL) {
         WritePrivateProfileString(_T("Package"), _T("UpgradePath"), UpgradePath->StartOfString, TempFile.StartOfString);
     }
@@ -388,6 +403,8 @@ YoriPkgCreateSourceFileFoundCallback(
 
     UNREFERENCED_PARAMETER(FileInfo);
 
+    ASSERT(YoriLibIsStringNullTerminated(FilePath));
+
     YoriLibInitEmptyString(&RelativePathFromSource);
 
     SlashesFound = 0;
@@ -434,6 +451,61 @@ YoriPkgCreateSourceFileFoundCallback(
 
     return TRUE;
 }
+
+/**
+ A callback that is invoked when a directory cannot be successfully enumerated.
+
+ @param FilePath Pointer to the file path that could not be enumerated.
+
+ @param ErrorCode The Win32 error code describing the failure.
+
+ @param Depth Recursion depth, ignored in this application.
+
+ @param Context Context, ignored in this function.
+
+ @return TRUE to continute enumerating, FALSE to abort.
+ */
+BOOL
+YoriPkgCreateSourceEnumerateErrorCallback(
+    __in PYORI_STRING FilePath,
+    __in DWORD ErrorCode,
+    __in DWORD Depth,
+    __in PVOID Context
+    )
+{
+    YORI_STRING UnescapedFilePath;
+    BOOL Result = FALSE;
+
+    UNREFERENCED_PARAMETER(Depth);
+    UNREFERENCED_PARAMETER(Context);
+
+    YoriLibInitEmptyString(&UnescapedFilePath);
+    if (!YoriLibUnescapePath(FilePath, &UnescapedFilePath)) {
+        UnescapedFilePath.StartOfString = FilePath->StartOfString;
+        UnescapedFilePath.LengthInChars = FilePath->LengthInChars;
+    }
+
+    if (ErrorCode == ERROR_FILE_NOT_FOUND || ErrorCode == ERROR_PATH_NOT_FOUND) {
+        YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("File or directory not found: %y\n"), &UnescapedFilePath);
+    } else {
+        LPTSTR ErrText = YoriLibGetWinErrorText(ErrorCode);
+        YORI_STRING DirName;
+        LPTSTR FilePart;
+        YoriLibInitEmptyString(&DirName);
+        DirName.StartOfString = UnescapedFilePath.StartOfString;
+        FilePart = YoriLibFindRightMostCharacter(&UnescapedFilePath, '\\');
+        if (FilePart != NULL) {
+            DirName.LengthInChars = (DWORD)(FilePart - DirName.StartOfString);
+        } else {
+            DirName.LengthInChars = UnescapedFilePath.LengthInChars;
+        }
+        YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("Enumerate of %y failed: %s"), &DirName, ErrText);
+        YoriLibFreeWinErrorText(ErrText);
+    }
+    YoriLibFreeStringContents(&UnescapedFilePath);
+    return Result;
+}
+
 
 /**
  Creates a source package.  This is intrinsically architecture neutral and is
@@ -575,6 +647,7 @@ YoriPkgCreateSourcePackage(
                        YORILIB_FILEENUM_RETURN_FILES | YORILIB_FILEENUM_DIRECTORY_CONTENTS | YORILIB_FILEENUM_RECURSE_AFTER_RETURN | YORILIB_FILEENUM_NO_LINK_TRAVERSE,
                        0,
                        YoriPkgCreateSourceFileFoundCallback,
+                       YoriPkgCreateSourceEnumerateErrorCallback,
                        &CreateSourceContext);
 
     YoriLibCloseCab(CreateSourceContext.CabHandle);

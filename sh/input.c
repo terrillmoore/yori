@@ -29,80 +29,131 @@
 /**
  Returns the coordinates in the console if the cursor is moved by a given
  number of cells.  Note the input value is signed, as this routine can move
- forwards (positive values) or backwards (negative values.)
+ forwards (positive values) or backwards (negative values.)  This function
+ uses a preexisting handle and screen buffer info structure which it keeps
+ up to date for repetitive calling.
+
+ @param ConsoleHandle A handle to the console output.
+
+ @param ScreenInfo Pointer to information about the current screen layout.
+        This function may scroll the buffer, but if it does, it will update
+        the values in this structure to remain correct.
 
  @param PlacesToMove The number of cells to move relative to the cursor.
 
- @return The X/Y coordinates of the cell if the cursor was moved the
-         specified number of places.
+ @param NewLocation If specified, on successful completion populated with the
+        X/Y coordinates of the cell if the cursor was moved the specified
+        number of places.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
  */
-COORD
-YoriShDetermineCellLocationIfMoved(
-    __in INT PlacesToMove
+BOOL
+YoriShDetermineCellLocationIfMovedCacheResult(
+    __in HANDLE ConsoleHandle,
+    __inout PCONSOLE_SCREEN_BUFFER_INFO ScreenInfo,
+    __in INT PlacesToMove,
+    __out_opt PCOORD NewLocation
     )
 {
-    CONSOLE_SCREEN_BUFFER_INFO ScreenInfo;
     INT PlacesToMoveDown;
     INT PlacesToMoveRight;
     COORD NewPosition;
-    HANDLE ConsoleHandle;
 
-    ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
-
-    // MSFIX Error handling
-    GetConsoleScreenBufferInfo(ConsoleHandle, &ScreenInfo);
-
-    PlacesToMoveDown = PlacesToMove / ScreenInfo.dwSize.X;
-    PlacesToMoveRight = PlacesToMove % ScreenInfo.dwSize.X;
+    PlacesToMoveDown = PlacesToMove / ScreenInfo->dwSize.X;
+    PlacesToMoveRight = PlacesToMove % ScreenInfo->dwSize.X;
     if (PlacesToMoveRight > 0) {
-        if (PlacesToMoveRight + ScreenInfo.dwCursorPosition.X >= ScreenInfo.dwSize.X) {
-            PlacesToMoveRight -= ScreenInfo.dwSize.X;
+        if (PlacesToMoveRight + ScreenInfo->dwCursorPosition.X >= ScreenInfo->dwSize.X) {
+            PlacesToMoveRight -= ScreenInfo->dwSize.X;
             PlacesToMoveDown++;
         }
     } else {
 
-        if (PlacesToMoveRight + ScreenInfo.dwCursorPosition.X < 0) {
-            PlacesToMoveRight += ScreenInfo.dwSize.X;
+        if (PlacesToMoveRight + ScreenInfo->dwCursorPosition.X < 0) {
+            PlacesToMoveRight += ScreenInfo->dwSize.X;
             PlacesToMoveDown--;
         }
     }
 
-    NewPosition.Y = (WORD)(ScreenInfo.dwCursorPosition.Y + PlacesToMoveDown);
-    NewPosition.X = (WORD)(ScreenInfo.dwCursorPosition.X + PlacesToMoveRight);
+    NewPosition.Y = (WORD)(ScreenInfo->dwCursorPosition.Y + PlacesToMoveDown);
+    NewPosition.X = (WORD)(ScreenInfo->dwCursorPosition.X + PlacesToMoveRight);
 
-    if (NewPosition.Y >= ScreenInfo.dwSize.Y) {
+    //
+    //  If the new position is off the end of the buffer, scroll the buffer up.
+    //  Adjust the cursor so it's with the same text it currently is, implying
+    //  that it's on a different buffer line.
+    //
+
+    if (NewPosition.Y >= ScreenInfo->dwSize.Y) {
         SMALL_RECT ContentsToPreserve;
         SMALL_RECT ContentsToErase;
         COORD Origin;
         CHAR_INFO NewChar;
         WORD LinesToMove;
 
-        LinesToMove = (WORD)(NewPosition.Y - ScreenInfo.dwSize.Y + 1);
+        LinesToMove = (WORD)(NewPosition.Y - ScreenInfo->dwSize.Y + 1);
 
         ContentsToPreserve.Left = 0;
-        ContentsToPreserve.Right = (WORD)(ScreenInfo.dwSize.X - 1);
+        ContentsToPreserve.Right = (WORD)(ScreenInfo->dwSize.X - 1);
         ContentsToPreserve.Top = LinesToMove;
-        ContentsToPreserve.Bottom = (WORD)(ScreenInfo.dwSize.Y - 1);
+        ContentsToPreserve.Bottom = (WORD)(ScreenInfo->dwSize.Y - 1);
 
         ContentsToErase.Left = 0;
-        ContentsToErase.Right = (WORD)(ScreenInfo.dwSize.X - 1);
-        ContentsToErase.Top = (WORD)(ScreenInfo.dwSize.Y - LinesToMove);
-        ContentsToErase.Bottom = (WORD)(ScreenInfo.dwSize.Y - 1);
+        ContentsToErase.Right = (WORD)(ScreenInfo->dwSize.X - 1);
+        ContentsToErase.Top = (WORD)(ScreenInfo->dwSize.Y - LinesToMove);
+        ContentsToErase.Bottom = (WORD)(ScreenInfo->dwSize.Y - 1);
 
         Origin.X = 0;
         Origin.Y = 0;
 
         NewChar.Char.UnicodeChar = ' ';
-        NewChar.Attributes = ScreenInfo.wAttributes;
-        ScrollConsoleScreenBuffer(ConsoleHandle, &ContentsToPreserve, NULL, Origin, &NewChar);
+        NewChar.Attributes = ScreenInfo->wAttributes;
+        if (!ScrollConsoleScreenBuffer(ConsoleHandle, &ContentsToPreserve, NULL, Origin, &NewChar)) {
+            return FALSE;
+        }
 
-        ScreenInfo.dwCursorPosition.Y = (WORD)(ScreenInfo.dwCursorPosition.Y - LinesToMove);
-        SetConsoleCursorPosition(ConsoleHandle, ScreenInfo.dwCursorPosition);
+        ScreenInfo->dwCursorPosition.Y = (WORD)(ScreenInfo->dwCursorPosition.Y - LinesToMove);
+        if (!SetConsoleCursorPosition(ConsoleHandle, ScreenInfo->dwCursorPosition)) {
+            return FALSE;
+        }
 
         NewPosition.Y = (WORD)(NewPosition.Y - LinesToMove);
     }
 
-    return NewPosition;
+    if (NewLocation != NULL) {
+        *NewLocation = NewPosition;
+    }
+
+    return TRUE;
+}
+
+/**
+ Returns the coordinates in the console if the cursor is moved by a given
+ number of cells.  Note the input value is signed, as this routine can move
+ forwards (positive values) or backwards (negative values.)
+
+ @param PlacesToMove The number of cells to move relative to the cursor.
+
+ @param NewLocation If specified, on successful completion populated with the
+        X/Y coordinates of the cell if the cursor was moved the specified
+        number of places.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriShDetermineCellLocationIfMoved(
+    __in INT PlacesToMove,
+    __out_opt PCOORD NewLocation
+    )
+{
+    CONSOLE_SCREEN_BUFFER_INFO ScreenInfo;
+    HANDLE ConsoleHandle;
+
+    ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (!GetConsoleScreenBufferInfo(ConsoleHandle, &ScreenInfo)) {
+        return FALSE;
+    }
+
+    return YoriShDetermineCellLocationIfMovedCacheResult(ConsoleHandle, &ScreenInfo, PlacesToMove, NewLocation);
 }
 
 /**
@@ -128,16 +179,13 @@ YoriShStringOffsetFromCoordinates(
     )
 {
     CONSOLE_SCREEN_BUFFER_INFO ScreenInfo;
-    HANDLE ConsoleHandle;
     DWORD StartOfString;
     DWORD CursorPosition;
     DWORD TargetPosition;
 
     UNREFERENCED_PARAMETER(TargetCoordinates);
 
-    ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
-
-    if (!GetConsoleScreenBufferInfo(ConsoleHandle, &ScreenInfo)) {
+    if (!GetConsoleScreenBufferInfo(Buffer->ConsoleOutputHandle, &ScreenInfo)) {
         return FALSE;
     }
 
@@ -167,14 +215,52 @@ YoriShStringOffsetFromCoordinates(
  values.)
 
  @param PlacesToMove The number of cells to move the cursor.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
  */
-VOID
+BOOL
 YoriShMoveCursor(
     __in INT PlacesToMove
     )
 {
-    COORD NewPosition = YoriShDetermineCellLocationIfMoved(PlacesToMove);
-    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), NewPosition);
+    COORD NewPosition;
+    if (YoriShDetermineCellLocationIfMoved(PlacesToMove, &NewPosition)) {
+        if (SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), NewPosition)) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/**
+ Move the cursor from its current position.  Note the input value is signed,
+ as this routine can move forwards (positive values) or backwards (negative
+ values.)
+
+ @param ConsoleHandle A handle to the console output.
+
+ @param ScreenInfo Pointer to information about the current screen layout.
+        This function may scroll the buffer, but if it does, it will update
+        the values in this structure to remain correct.
+
+ @param PlacesToMove The number of cells to move the cursor.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriShMoveCursorCacheResult(
+    __in HANDLE ConsoleHandle,
+    __inout PCONSOLE_SCREEN_BUFFER_INFO ScreenInfo,
+    __in INT PlacesToMove
+    )
+{
+    COORD NewPosition;
+    if (YoriShDetermineCellLocationIfMovedCacheResult(ConsoleHandle, ScreenInfo, PlacesToMove, &NewPosition)) {
+        if (SetConsoleCursorPosition(ConsoleHandle, NewPosition)) {
+            return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 /**
@@ -218,8 +304,10 @@ YoriShPostKeyPress(
  After a key has been pressed and processed, display the resulting buffer.
 
  @param Buffer Pointer to the input buffer to display.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
  */
-VOID
+BOOL
 YoriShDisplayAfterKeyPress(
     __in PYORI_SH_INPUT_BUFFER Buffer
     )
@@ -231,10 +319,41 @@ YoriShDisplayAfterKeyPress(
     COORD FillPosition;
     COORD SuggestionPosition;
     CONSOLE_SCREEN_BUFFER_INFO ScreenInfo;
-    WORD FillAttributes;
     HANDLE hConsole;
 
+    //
+    //  We don't want to have a selection and mouseover active at once, since
+    //  it'd be too confusing for the user and the code.  However, this routine
+    //  may be trying to clear one and display the other; in that case, we need
+    //  to clear the old one first to ensure the new one captures the user's
+    //  color information, not the result of a stale highlight.
+    //
+
+    ASSERT(!(YoriLibIsSelectionActive(&Buffer->Selection) && YoriLibIsSelectionActive(&Buffer->Mouseover)));
+
+    //
+    //  If we're clearing the mouseover, clear it first.
+    //
+
+    if (YoriLibIsPreviousSelectionActive(&Buffer->Mouseover) && !YoriLibIsSelectionActive(&Buffer->Mouseover)) {
+        YoriLibRedrawSelection(&Buffer->Mouseover);
+    }
+
+    //
+    //  If we're clearing the selection, clear it now.
+    //
+
+    if (YoriLibIsPreviousSelectionActive(&Buffer->Selection) && !YoriLibIsSelectionActive(&Buffer->Selection)) {
+        YoriLibRedrawSelection(&Buffer->Selection);
+    }
+
+
+    //
+    //  Redraw whichever is active now
+    //
+
     YoriLibRedrawSelection(&Buffer->Selection);
+    YoriLibRedrawSelection(&Buffer->Mouseover);
 
     WritePosition.X = 0;
     WritePosition.Y = 0;
@@ -252,12 +371,9 @@ YoriShDisplayAfterKeyPress(
         Buffer->SuggestionDirty ||
         Buffer->PreviousCurrentOffset != Buffer->CurrentOffset) {
 
-        // MSFIX Error handling
-        hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-        if (GetConsoleScreenBufferInfo(hConsole, &ScreenInfo)) {
-            FillAttributes = ScreenInfo.wAttributes;
-        } else {
-            FillAttributes = YoriLibVtGetDefaultColor();
+        hConsole = Buffer->ConsoleOutputHandle;
+        if (!GetConsoleScreenBufferInfo(hConsole, &ScreenInfo)) {
+            return FALSE;
         }
 
         //
@@ -271,12 +387,23 @@ YoriShDisplayAfterKeyPress(
 
         //
         //  Calculate the locations to write both the new text as well as where
-        //  to erase any previous test.
+        //  to erase any previous text.
         //
-        //  Calculate where the buffer will end and discard the result; this is
-        //  done to ensure the screen buffer is scrolled so the whole output
-        //  has somewhere to go.
+        //  Calculate where the buffer will end in order to force the display
+        //  to scroll so the whole output has somewhere to go.  The suggestion
+        //  is scrolled first because it must be longer than the buffer alone,
+        //  so doing this ensures sufficient scrolling has performed for both
+        //  WritePosition and SelectionPosition to be valid.
         //
+
+        if (Buffer->SuggestionString.LengthInChars > 0) {
+            if (!YoriShDetermineCellLocationIfMovedCacheResult(hConsole, &ScreenInfo, -1 * Buffer->PreviousCurrentOffset + Buffer->String.LengthInChars + Buffer->SuggestionString.LengthInChars, NULL)) {
+                return FALSE;
+            }
+            if (!YoriShDetermineCellLocationIfMovedCacheResult(hConsole, &ScreenInfo, -1 * Buffer->PreviousCurrentOffset + Buffer->String.LengthInChars, &SuggestionPosition)) {
+                return FALSE;
+            }
+        }
 
         if (Buffer->DirtyBeginOffset < Buffer->String.LengthInChars && Buffer->DirtyLength > 0) {
             if (Buffer->DirtyBeginOffset + Buffer->DirtyLength > Buffer->String.LengthInChars) {
@@ -284,18 +411,23 @@ YoriShDisplayAfterKeyPress(
             } else {
                 NumberToWrite = Buffer->DirtyLength;
             }
-            YoriShDetermineCellLocationIfMoved((-1 * Buffer->PreviousCurrentOffset) + Buffer->DirtyBeginOffset + NumberToWrite);
-            WritePosition = YoriShDetermineCellLocationIfMoved((-1 * Buffer->PreviousCurrentOffset) + Buffer->DirtyBeginOffset);
+
+            if (!YoriShDetermineCellLocationIfMovedCacheResult(hConsole, &ScreenInfo, (-1 * Buffer->PreviousCurrentOffset) + Buffer->DirtyBeginOffset + NumberToWrite, NULL)) {
+                return FALSE;
+            }
+            if (!YoriShDetermineCellLocationIfMovedCacheResult(hConsole, &ScreenInfo, (-1 * Buffer->PreviousCurrentOffset) + Buffer->DirtyBeginOffset, &WritePosition)) {
+                return FALSE;
+            }
         }
 
-        if (Buffer->SuggestionString.LengthInChars > 0) {
-            YoriShDetermineCellLocationIfMoved(-1 * Buffer->PreviousCurrentOffset + Buffer->String.LengthInChars + Buffer->SuggestionString.LengthInChars);
-            SuggestionPosition = YoriShDetermineCellLocationIfMoved(-1 * Buffer->PreviousCurrentOffset + Buffer->String.LengthInChars);
-        }
 
         if (NumberToFill) {
-            YoriShDetermineCellLocationIfMoved(-1 * Buffer->PreviousCurrentOffset + Buffer->String.LengthInChars + Buffer->SuggestionString.LengthInChars + NumberToFill);
-            FillPosition = YoriShDetermineCellLocationIfMoved(-1 * Buffer->PreviousCurrentOffset + Buffer->String.LengthInChars + Buffer->SuggestionString.LengthInChars);
+            if (!YoriShDetermineCellLocationIfMovedCacheResult(hConsole, &ScreenInfo, -1 * Buffer->PreviousCurrentOffset + Buffer->String.LengthInChars + Buffer->SuggestionString.LengthInChars + NumberToFill, NULL)) {
+                return FALSE;
+            }
+            if (!YoriShDetermineCellLocationIfMovedCacheResult(hConsole, &ScreenInfo, -1 * Buffer->PreviousCurrentOffset + Buffer->String.LengthInChars + Buffer->SuggestionString.LengthInChars, &FillPosition)) {
+                return FALSE;
+            }
         }
 
         if (NumberToWrite > 0 ||
@@ -307,7 +439,9 @@ YoriShDisplayAfterKeyPress(
             //  and render the text.
             //
 
-            YoriShMoveCursor(Buffer->CurrentOffset - Buffer->PreviousCurrentOffset);
+            if (!YoriShMoveCursorCacheResult(hConsole, &ScreenInfo, Buffer->CurrentOffset - Buffer->PreviousCurrentOffset)) {
+                return FALSE;
+            }
 
             if (NumberToWrite) {
                 WriteConsoleOutputCharacter(hConsole, &Buffer->String.StartOfString[Buffer->DirtyBeginOffset], NumberToWrite, WritePosition, &NumberWritten);
@@ -336,6 +470,8 @@ YoriShDisplayAfterKeyPress(
         Buffer->DirtyLength = 0;
         Buffer->SuggestionDirty = FALSE;
     }
+
+    return TRUE;
 }
 
 /**
@@ -371,24 +507,19 @@ YoriShEnsureStringHasEnoughCharacters(
  allow Yori to process mouse input so it can use its internal QuickEdit
  support.
 
- @param Buffer Pointer to the input buffer which indicates whether this
-        behavior is requested.
-
  @return TRUE to indicate success, FALSE to indicate failure.
  */
 BOOL
 YoriShConfigureMouseForPrompt(
-    __in PYORI_SH_INPUT_BUFFER Buffer
+    __in HANDLE ConsoleInputHandle
     )
 {
-    HANDLE ConsoleHandle;
     DWORD ConsoleMode;
-    if (!Buffer->YoriQuickEdit) {
+    if (!YoriShGlobal.YoriQuickEdit) {
         return TRUE;
     }
 
-    ConsoleHandle = GetStdHandle(STD_INPUT_HANDLE);
-    if (!GetConsoleMode(ConsoleHandle, &ConsoleMode)) {
+    if (!GetConsoleMode(ConsoleInputHandle, &ConsoleMode)) {
         return FALSE;
     }
 
@@ -398,7 +529,7 @@ YoriShConfigureMouseForPrompt(
     //  this has the effect of turning off console's quickedit.
     //
 
-    SetConsoleMode(ConsoleHandle, ConsoleMode | ENABLE_EXTENDED_FLAGS);
+    SetConsoleMode(ConsoleInputHandle, ConsoleMode | ENABLE_EXTENDED_FLAGS);
     return TRUE;
 }
 
@@ -406,24 +537,19 @@ YoriShConfigureMouseForPrompt(
  When YORIQUICKEDIT is set, enable the console's QuickEdit capabilities to
  allow QuickEdit to be used with external programs.
 
- @param Buffer Pointer to the input buffer which indicates whether this
-        behavior is requested.
-
  @return TRUE to indicate success, FALSE to indicate failure.
  */
 BOOL
 YoriShConfigureMouseForPrograms(
-    __in PYORI_SH_INPUT_BUFFER Buffer
+    __in HANDLE ConsoleInputHandle
     )
 {
-    HANDLE ConsoleHandle;
     DWORD ConsoleMode;
-    if (!Buffer->YoriQuickEdit) {
+    if (!YoriShGlobal.YoriQuickEdit) {
         return TRUE;
     }
 
-    ConsoleHandle = GetStdHandle(STD_INPUT_HANDLE);
-    if (!GetConsoleMode(ConsoleHandle, &ConsoleMode)) {
+    if (!GetConsoleMode(ConsoleInputHandle, &ConsoleMode)) {
         return FALSE;
     }
 
@@ -432,7 +558,7 @@ YoriShConfigureMouseForPrograms(
     //  QuickEdit.
     //
 
-    SetConsoleMode(ConsoleHandle, ConsoleMode | ENABLE_QUICK_EDIT_MODE | ENABLE_EXTENDED_FLAGS);
+    SetConsoleMode(ConsoleInputHandle, ConsoleMode | ENABLE_QUICK_EDIT_MODE | ENABLE_EXTENDED_FLAGS);
     return TRUE;
 }
 
@@ -493,10 +619,51 @@ YoriShTerminateInput(
     YoriShPostKeyPress(Buffer);
     YoriShClearTabCompletionMatches(Buffer);
     YoriLibCleanupSelection(&Buffer->Selection);
+    YoriLibCleanupSelection(&Buffer->Mouseover);
     Buffer->String.StartOfString[Buffer->String.LengthInChars] = '\0';
     YoriShMoveCursor(Buffer->String.LengthInChars - Buffer->CurrentOffset);
-    YoriShConfigureMouseForPrograms(Buffer);
+    YoriShConfigureMouseForPrograms(Buffer->ConsoleInputHandle);
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("\n"));
+}
+
+/**
+ Clear any mouse over selection.
+
+ @param Buffer Pointer to the input buffer to clear any mouse over selection
+        from.
+
+ @return TRUE to indicate that a redraw is required because a selection was
+         cleared.
+ */
+BOOL
+YoriShClearMouseoverSelection(
+    __inout PYORI_SH_INPUT_BUFFER Buffer
+    )
+{
+    return YoriLibClearSelection(&Buffer->Mouseover);
+}
+
+/**
+ Clear any mouse over selection as well as any copy/paste selection.
+
+ @param Buffer Pointer to the input buffer to clear any selection from.
+
+ @return TRUE to indicate that a redraw is required because at least one
+         selection was cleared.
+ */
+BOOL
+YoriShClearInputSelections(
+    __inout PYORI_SH_INPUT_BUFFER Buffer
+    )
+{
+    BOOL RedrawFromMouseover;
+    BOOL RedrawFromSelection;
+
+    RedrawFromMouseover = YoriShClearMouseoverSelection(Buffer);
+    RedrawFromSelection = YoriLibClearSelection(&Buffer->Selection);
+
+    ASSERT(!(RedrawFromMouseover && RedrawFromSelection));
+    return (RedrawFromMouseover || RedrawFromSelection);
 }
 
 
@@ -516,7 +683,7 @@ YoriShClearInput(
     Buffer->String.LengthInChars = 0;
     Buffer->CurrentOffset = 0;
     Buffer->SearchMode = FALSE;
-    YoriLibClearSelection(&Buffer->Selection);
+    YoriShClearInputSelections(Buffer);
 }
 
 /**
@@ -1110,13 +1277,9 @@ YoriShHotkey(
 /**
  Check the environment to see if the user wants to customize suggestion
  settings.
-
- @param Buffer Pointer to the input buffer structure to update in response
-        to values found in the environment.
  */
 VOID
 YoriShConfigureInputSettings(
-    __in PYORI_SH_INPUT_BUFFER Buffer
     )
 {
     DWORD EnvVarLength;
@@ -1124,80 +1287,107 @@ YoriShConfigureInputSettings(
     LONGLONG llTemp;
     DWORD CharsConsumed;
     TCHAR EnvVarBuffer[10];
+    YORI_STRING MouseoverColorString;
+    YORILIB_COLOR_ATTRIBUTES MouseoverColor;
 
-    //
-    //  Default to suggesting in 400ms after seeing 2 chars in an arg.
-    //
+    if (YoriShGlobal.InputParamsGeneration != YoriShGlobal.EnvironmentGeneration) {
 
-    Buffer->DelayBeforeSuggesting = 400;
-    Buffer->MinimumCharsInArgBeforeSuggesting = 2;
-    Buffer->YoriQuickEdit = FALSE;
+        //
+        //  Default to suggesting in 400ms after seeing 2 chars in an arg.
+        //
 
-    //
-    //  Check the environment to see if the user wants to override the
-    //  suggestion delay.  Note a value of zero disables the feature.
-    //
+        YoriShGlobal.DelayBeforeSuggesting = 400;
+        YoriShGlobal.MinimumCharsInArgBeforeSuggesting = 2;
+        YoriShGlobal.YoriQuickEdit = FALSE;
+        YoriShGlobal.MouseoverEnabled = TRUE;
 
-    YoriLibInitEmptyString(&EnvVar);
-    EnvVar.StartOfString = EnvVarBuffer;
-    EnvVar.LengthAllocated = sizeof(EnvVarBuffer)/sizeof(EnvVarBuffer[0]);
+        //
+        //  Check the environment to see if the user wants to override the
+        //  suggestion delay.  Note a value of zero disables the feature.
+        //
 
-    EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORISUGGESTIONDELAY"), NULL, 0);
-    if (EnvVarLength > 0) {
-        if (EnvVarLength > EnvVar.LengthAllocated) {
-            YoriLibFreeStringContents(&EnvVar);
-            YoriLibAllocateString(&EnvVar, EnvVarLength);
-        }
-        if (EnvVarLength <= EnvVar.LengthAllocated) {
-            EnvVar.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORISUGGESTIONDELAY"), EnvVar.StartOfString, EnvVar.LengthAllocated);
-            if (YoriLibStringToNumber(&EnvVar, TRUE, &llTemp, &CharsConsumed) && CharsConsumed > 0) {
-                Buffer->DelayBeforeSuggesting = (ULONG)llTemp;
+        YoriLibInitEmptyString(&EnvVar);
+        EnvVar.StartOfString = EnvVarBuffer;
+        EnvVar.LengthAllocated = sizeof(EnvVarBuffer)/sizeof(EnvVarBuffer[0]);
+
+        EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORISUGGESTIONDELAY"), NULL, 0, NULL);
+        if (EnvVarLength > 0) {
+            if (EnvVarLength > EnvVar.LengthAllocated) {
+                YoriLibFreeStringContents(&EnvVar);
+                YoriLibAllocateString(&EnvVar, EnvVarLength);
             }
-        }
-    }
-
-    //
-    //  Check the environment to see if the user wants to override the
-    //  minimum number of characters needed in an arg before suggesting.
-    //
-
-    EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORISUGGESTIONMINCHARS"), NULL, 0);
-    if (EnvVarLength > 0) {
-        if (EnvVarLength > EnvVar.LengthAllocated) {
-            YoriLibFreeStringContents(&EnvVar);
-            YoriLibAllocateString(&EnvVar, EnvVarLength);
-        }
-        if (EnvVarLength <= EnvVar.LengthAllocated) {
-            EnvVar.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORISUGGESTIONMINCHARS"), EnvVar.StartOfString, EnvVar.LengthAllocated);
-            if (YoriLibStringToNumber(&EnvVar, TRUE, &llTemp, &CharsConsumed) && CharsConsumed > 0) {
-                Buffer->MinimumCharsInArgBeforeSuggesting = (ULONG)llTemp;
-            }
-        }
-    }
-
-    //
-    //  Check the environment to see if the user wants to use Yori's mouse
-    //  input support at the prompt and console QuickEdit when running
-    //  applications.
-    //
-
-    EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORIQUICKEDIT"), NULL, 0);
-    if (EnvVarLength > 0) {
-        if (EnvVarLength > EnvVar.LengthAllocated) {
-            YoriLibFreeStringContents(&EnvVar);
-            YoriLibAllocateString(&EnvVar, EnvVarLength);
-        }
-        if (EnvVarLength <= EnvVar.LengthAllocated) {
-            EnvVar.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORIQUICKEDIT"), EnvVar.StartOfString, EnvVar.LengthAllocated);
-            if (YoriLibStringToNumber(&EnvVar, TRUE, &llTemp, &CharsConsumed) && CharsConsumed > 0) {
-                if (llTemp == 1) {
-                    Buffer->YoriQuickEdit = TRUE;
+            if (EnvVarLength <= EnvVar.LengthAllocated) {
+                EnvVar.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORISUGGESTIONDELAY"), EnvVar.StartOfString, EnvVar.LengthAllocated, NULL);
+                if (YoriLibStringToNumber(&EnvVar, TRUE, &llTemp, &CharsConsumed) && CharsConsumed > 0) {
+                    YoriShGlobal.DelayBeforeSuggesting = (ULONG)llTemp;
                 }
             }
         }
-    }
 
-    YoriLibFreeStringContents(&EnvVar);
+        //
+        //  Check the environment to see if the user wants to override the
+        //  minimum number of characters needed in an arg before suggesting.
+        //
+
+        EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORISUGGESTIONMINCHARS"), NULL, 0, NULL);
+        if (EnvVarLength > 0) {
+            if (EnvVarLength > EnvVar.LengthAllocated) {
+                YoriLibFreeStringContents(&EnvVar);
+                YoriLibAllocateString(&EnvVar, EnvVarLength);
+            }
+            if (EnvVarLength <= EnvVar.LengthAllocated) {
+                EnvVar.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORISUGGESTIONMINCHARS"), EnvVar.StartOfString, EnvVar.LengthAllocated, NULL);
+                if (YoriLibStringToNumber(&EnvVar, TRUE, &llTemp, &CharsConsumed) && CharsConsumed > 0) {
+                    YoriShGlobal.MinimumCharsInArgBeforeSuggesting = (ULONG)llTemp;
+                }
+            }
+        }
+
+        //
+        //  Check the environment to see if the user wants to use Yori's mouse
+        //  input support at the prompt and console QuickEdit when running
+        //  applications.
+        //
+
+        if (YoriLibIsYoriQuickEditEnabled()) {
+            YoriShGlobal.YoriQuickEdit = TRUE;
+        }
+
+        //
+        //  Check the environment to see if the user wants to use Yori's mouse
+        //  over support.
+        //
+
+        EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORIMOUSEOVER"), NULL, 0, NULL);
+        if (EnvVarLength > 0) {
+            if (EnvVarLength > EnvVar.LengthAllocated) {
+                YoriLibFreeStringContents(&EnvVar);
+                YoriLibAllocateString(&EnvVar, EnvVarLength);
+            }
+            if (EnvVarLength <= EnvVar.LengthAllocated) {
+                EnvVar.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORIMOUSEOVER"), EnvVar.StartOfString, EnvVar.LengthAllocated, NULL);
+                if (YoriLibStringToNumber(&EnvVar, TRUE, &llTemp, &CharsConsumed) && CharsConsumed > 0) {
+                    if (llTemp == 0) {
+                        YoriShGlobal.MouseoverEnabled = FALSE;
+                    }
+                }
+            }
+        }
+
+        YoriLibFreeStringContents(&EnvVar);
+
+        YoriLibConstantString(&MouseoverColorString, _T("mo"));
+        if (!YoriLibGetMetadataColor(&MouseoverColorString, &MouseoverColor)) {
+            YoriShGlobal.MouseoverColor = (UCHAR)YoriLibVtGetDefaultColor();
+        }
+
+        YoriShGlobal.MouseoverColor = MouseoverColor.Win32Attr;
+        if (MouseoverColor.Ctrl & YORILIB_ATTRCTRL_UNDERLINE) {
+            YoriShGlobal.MouseoverColor |= COMMON_LVB_UNDERSCORE;
+        }
+
+        YoriShGlobal.InputParamsGeneration = YoriShGlobal.EnvironmentGeneration;
+    }
 }
 
 /**
@@ -1215,8 +1405,7 @@ YoriShClearScreen(
     CONSOLE_SCREEN_BUFFER_INFO ScreenInfo;
     DWORD CharsWritten;
 
-    ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
-
+    ConsoleHandle = Buffer->ConsoleOutputHandle;
     if (!GetConsoleScreenBufferInfo(ConsoleHandle, &ScreenInfo)) {
         return;
     }
@@ -1244,8 +1433,10 @@ YoriShClearScreen(
  to the left by one character.
 
  @param Buffer Pointer to the input buffer whose selection should be updated.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
  */
-VOID
+BOOL
 YoriShSelectLeftChar(
     __inout PYORI_SH_INPUT_BUFFER Buffer
     )
@@ -1253,19 +1444,36 @@ YoriShSelectLeftChar(
     COORD StartCoord;
     COORD NewCoord;
     if (!YoriLibIsSelectionActive(&Buffer->Selection)) {
-        StartCoord = YoriShDetermineCellLocationIfMoved(0);
+        if (!YoriShDetermineCellLocationIfMoved(0, &StartCoord)) {
+            return FALSE;
+        }
     } else {
         StartCoord.X = Buffer->Selection.CurrentlyDisplayed.Left;
         StartCoord.Y = Buffer->Selection.CurrentlyDisplayed.Top;
     }
-    NewCoord = YoriShDetermineCellLocationIfMoved(-1);
+    if (!YoriShDetermineCellLocationIfMoved(-1, &NewCoord)) {
+        return FALSE;
+    }
+
     if (NewCoord.Y == StartCoord.Y && Buffer->CurrentOffset > 0) {
+        YoriShClearMouseoverSelection(Buffer);
         Buffer->CurrentOffset--;
         if (!YoriLibIsSelectionActive(&Buffer->Selection)) {
             YoriLibCreateSelectionFromPoint(&Buffer->Selection, NewCoord.X, NewCoord.Y);
         }
-        YoriLibUpdateSelectionToPoint(&Buffer->Selection, NewCoord.X, NewCoord.Y);
+        if (!YoriLibUpdateSelectionToPoint(&Buffer->Selection, NewCoord.X, NewCoord.Y)) {
+            YoriLibClearSelection(&Buffer->Selection);
+        }
+
+        //
+        //  Since this is horizontal selection, we don't want to periodically
+        //  scroll vertically.
+        //
+
+        Buffer->Selection.PeriodicScrollAmount.Y = 0;
     }
+
+    return TRUE;
 }
 
 /**
@@ -1273,8 +1481,10 @@ YoriShSelectLeftChar(
  to the right by one character.
 
  @param Buffer Pointer to the input buffer whose selection should be updated.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
  */
-VOID
+BOOL
 YoriShSelectRightChar(
     __inout PYORI_SH_INPUT_BUFFER Buffer
     )
@@ -1282,19 +1492,141 @@ YoriShSelectRightChar(
     COORD StartCoord;
     COORD NewCoord;
     if (!YoriLibIsSelectionActive(&Buffer->Selection)) {
-        StartCoord = YoriShDetermineCellLocationIfMoved(0);
+        if (!YoriShDetermineCellLocationIfMoved(0, &StartCoord)) {
+            return FALSE;
+        }
     } else {
         StartCoord.X = Buffer->Selection.CurrentlyDisplayed.Left;
         StartCoord.Y = Buffer->Selection.CurrentlyDisplayed.Top;
     }
-    NewCoord = YoriShDetermineCellLocationIfMoved(1);
+
+    if (!YoriShDetermineCellLocationIfMoved(1, &NewCoord)) {
+        return FALSE;
+    }
+
     if (NewCoord.Y == StartCoord.Y && Buffer->CurrentOffset + 1 < Buffer->String.LengthInChars) {
+        YoriShClearMouseoverSelection(Buffer);
         Buffer->CurrentOffset++;
         if (!YoriLibIsSelectionActive(&Buffer->Selection)) {
             YoriLibCreateSelectionFromPoint(&Buffer->Selection, StartCoord.X, StartCoord.Y);
         }
-        YoriLibUpdateSelectionToPoint(&Buffer->Selection, NewCoord.X, NewCoord.Y);
+        if (!YoriLibUpdateSelectionToPoint(&Buffer->Selection, NewCoord.X, NewCoord.Y)) {
+            YoriLibClearSelection(&Buffer->Selection);
+        }
+
+        //
+        //  Since this is horizontal selection, we don't want to periodically
+        //  scroll vertically.
+        //
+
+        Buffer->Selection.PeriodicScrollAmount.Y = 0;
     }
+
+    return TRUE;
+}
+
+/**
+ Process a key that is typically an enhanced key, including arrows, insert,
+ delete, home, end, etc.  The "normal" placement of these keys is as enhanced,
+ but the original XT keys are the ones on the number pad when num lock is off,
+ which have the same key codes but don't have the enhanced bit set.  This
+ function is invoked to handle either case.
+
+ @param Buffer Pointer to the input buffer to update.
+
+ @param InputRecord Pointer to the console input event.
+
+ @param TerminateInput On successful completion, set to TRUE to indicate that
+        the input sequence is complete and should be returned to the caller.
+
+ @return TRUE to indicate that input processing should stop; FALSE to indicate
+         regular buffer display should occur.
+ */
+BOOL
+YoriShProcessEnhancedKeyDown(
+    __inout PYORI_SH_INPUT_BUFFER Buffer,
+    __in PINPUT_RECORD InputRecord,
+    __out PBOOL TerminateInput
+    )
+{
+    PYORI_LIST_ENTRY NewEntry = NULL;
+    PYORI_SH_HISTORY_ENTRY HistoryEntry;
+    WORD KeyCode;
+    DWORD Count;
+
+    KeyCode = InputRecord->Event.KeyEvent.wVirtualKeyCode;
+
+    if (KeyCode == VK_UP) {
+        NewEntry = YoriLibGetPreviousListEntry(&YoriShGlobal.CommandHistory, Buffer->HistoryEntryToUse);
+        if (NewEntry != NULL) {
+            Buffer->HistoryEntryToUse = NewEntry;
+            HistoryEntry = CONTAINING_RECORD(NewEntry, YORI_SH_HISTORY_ENTRY, ListEntry);
+            YoriShClearInput(Buffer);
+            YoriShAddYoriStringToInput(Buffer, &HistoryEntry->CmdLine);
+        }
+    } else if (KeyCode == VK_DOWN) {
+        if (Buffer->HistoryEntryToUse != NULL) {
+            NewEntry = YoriLibGetNextListEntry(&YoriShGlobal.CommandHistory, Buffer->HistoryEntryToUse);
+        }
+        if (NewEntry != NULL) {
+            Buffer->HistoryEntryToUse = NewEntry;
+            HistoryEntry = CONTAINING_RECORD(NewEntry, YORI_SH_HISTORY_ENTRY, ListEntry);
+            YoriShClearInput(Buffer);
+            YoriShAddYoriStringToInput(Buffer, &HistoryEntry->CmdLine);
+        }
+    } else if (KeyCode == VK_LEFT) {
+        if (Buffer->CurrentOffset > 0) {
+            Buffer->CurrentOffset--;
+        }
+    } else if (KeyCode == VK_RIGHT) {
+        if (Buffer->CurrentOffset < Buffer->String.LengthInChars) {
+            Buffer->CurrentOffset++;
+        }
+    } else if (KeyCode == VK_INSERT) {
+        Buffer->CursorInfo.bVisible = TRUE;
+        if (Buffer->InsertMode) {
+            Buffer->InsertMode = FALSE;
+            Buffer->CursorInfo.dwSize = 100;
+        } else {
+            Buffer->InsertMode = TRUE;
+            Buffer->CursorInfo.dwSize = 20;
+        }
+        SetConsoleCursorInfo(Buffer->ConsoleOutputHandle, &Buffer->CursorInfo);
+    } else if (KeyCode == VK_HOME) {
+        Buffer->CurrentOffset = 0;
+    } else if (KeyCode == VK_END) {
+        Buffer->CurrentOffset = Buffer->String.LengthInChars;
+    } else if (KeyCode == VK_DELETE) {
+
+        if (!YoriShOverwriteSelectionIfInInput(Buffer)) {
+            Count = InputRecord->Event.KeyEvent.wRepeatCount;
+            if (Count + Buffer->CurrentOffset > Buffer->String.LengthInChars) {
+                Count = Buffer->String.LengthInChars - Buffer->CurrentOffset;
+            }
+
+            Buffer->CurrentOffset += Count;
+            YoriShBackspace(Buffer, Count);
+        }
+
+    } else if (KeyCode == VK_RETURN) {
+        if (Buffer->SearchMode) {
+            Buffer->SearchMode = FALSE;
+            YoriLibFreeStringContents(&Buffer->SearchString);
+        } else {
+            if (!YoriLibCopySelectionIfPresent(&Buffer->Selection)) {
+                *TerminateInput = TRUE;
+            }
+            YoriShClearInputSelections(Buffer);
+            return TRUE;
+        }
+    } else if (KeyCode == VK_DIVIDE) {
+        YORI_STRING KeyString;
+        YoriLibConstantString(&KeyString, _T("/"));
+        for (Count = 0; Count < InputRecord->Event.KeyEvent.wRepeatCount; Count++) {
+            YoriShAddYoriStringToInput(Buffer, &KeyString);
+        }
+    }
+    return FALSE;
 }
 
 /**
@@ -1335,14 +1667,26 @@ YoriShProcessKeyDown(
     if (KeyCode >= VK_F1 && KeyCode <= VK_F12) {
         if (YoriShHotkey(Buffer, KeyCode, CtrlMask)) {
             *TerminateInput = TRUE;
-            YoriLibClearSelection(&Buffer->Selection);
+            YoriShClearInputSelections(Buffer);
             return TRUE;
         }
     }
 
     ClearSelection = TRUE;
 
-    if (CtrlMask == 0 || CtrlMask == SHIFT_PRESSED) {
+    //
+    //  Right Alt is AltGr, which is a form of shift key on international
+    //  keyboards.  Windows exposes this as Ctrl+Alt.
+    //
+
+    if (CtrlMask == 0 ||
+        CtrlMask == SHIFT_PRESSED ||
+        CtrlMask == (LEFT_CTRL_PRESSED | LEFT_ALT_PRESSED) ||
+        CtrlMask == (LEFT_CTRL_PRESSED | LEFT_ALT_PRESSED | SHIFT_PRESSED) ||
+        CtrlMask == (LEFT_CTRL_PRESSED | RIGHT_ALT_PRESSED) ||
+        CtrlMask == (LEFT_CTRL_PRESSED | RIGHT_ALT_PRESSED | SHIFT_PRESSED) ||
+        CtrlMask == RIGHT_ALT_PRESSED ||
+        CtrlMask == (RIGHT_ALT_PRESSED | SHIFT_PRESSED)) {
 
         if (Char == '\r') {
             if (Buffer->SearchMode) {
@@ -1352,7 +1696,7 @@ YoriShProcessKeyDown(
                 if (!YoriLibCopySelectionIfPresent(&Buffer->Selection)) {
                     *TerminateInput = TRUE;
                 }
-                YoriLibClearSelection(&Buffer->Selection);
+                YoriShClearInputSelections(Buffer);
                 return TRUE;
             }
         } else if (Char == 27) {
@@ -1374,6 +1718,9 @@ YoriShProcessKeyDown(
                 YoriShBackspace(Buffer, InputRecord->Event.KeyEvent.wRepeatCount);
             }
         } else if (Char == '\0') {
+            if (YoriShProcessEnhancedKeyDown(Buffer, InputRecord, TerminateInput)) {
+                return TRUE;
+            }
         } else {
             for (Count = 0; Count < InputRecord->Event.KeyEvent.wRepeatCount; Count++) {
                 TCHAR StringChar[2];
@@ -1388,9 +1735,12 @@ YoriShProcessKeyDown(
         if (KeyCode == 'A') {
             Buffer->CurrentOffset = 0;
         } else if (KeyCode == 'C') {
-            YoriShClearInput(Buffer);
-            YoriLibClearSelection(&Buffer->Selection);
-            *TerminateInput = TRUE;
+            if (!YoriLibCopySelectionIfPresent(&Buffer->Selection)) {
+                YoriShClearInputSelections(Buffer);
+                YoriShClearInput(Buffer);
+                *TerminateInput = TRUE;
+            }
+            YoriShClearInputSelections(Buffer);
             return TRUE;
         } else if (KeyCode == 'E') {
             Buffer->CurrentOffset = Buffer->String.LengthInChars;
@@ -1420,72 +1770,8 @@ YoriShProcessKeyDown(
             YoriShTabCompletion(Buffer, YORI_SH_TAB_COMPLETE_FULL_PATH | YORI_SH_TAB_COMPLETE_BACKWARDS);
         }
     } else if (CtrlMask == ENHANCED_KEY) {
-        PYORI_LIST_ENTRY NewEntry = NULL;
-        PYORI_SH_HISTORY_ENTRY HistoryEntry;
-        if (KeyCode == VK_UP) {
-            NewEntry = YoriLibGetPreviousListEntry(&YoriShCommandHistory, Buffer->HistoryEntryToUse);
-            if (NewEntry != NULL) {
-                Buffer->HistoryEntryToUse = NewEntry;
-                HistoryEntry = CONTAINING_RECORD(NewEntry, YORI_SH_HISTORY_ENTRY, ListEntry);
-                YoriShClearInput(Buffer);
-                YoriShAddYoriStringToInput(Buffer, &HistoryEntry->CmdLine);
-            }
-        } else if (KeyCode == VK_DOWN) {
-            if (Buffer->HistoryEntryToUse != NULL) {
-                NewEntry = YoriLibGetNextListEntry(&YoriShCommandHistory, Buffer->HistoryEntryToUse);
-            }
-            if (NewEntry != NULL) {
-                Buffer->HistoryEntryToUse = NewEntry;
-                HistoryEntry = CONTAINING_RECORD(NewEntry, YORI_SH_HISTORY_ENTRY, ListEntry);
-                YoriShClearInput(Buffer);
-                YoriShAddYoriStringToInput(Buffer, &HistoryEntry->CmdLine);
-            }
-        } else if (KeyCode == VK_LEFT) {
-            if (Buffer->CurrentOffset > 0) {
-                Buffer->CurrentOffset--;
-            }
-        } else if (KeyCode == VK_RIGHT) {
-            if (Buffer->CurrentOffset < Buffer->String.LengthInChars) {
-                Buffer->CurrentOffset++;
-            }
-        } else if (KeyCode == VK_INSERT) {
-            Buffer->CursorInfo.bVisible = TRUE;
-            if (Buffer->InsertMode) {
-                Buffer->InsertMode = FALSE;
-                Buffer->CursorInfo.dwSize = 100;
-            } else {
-                Buffer->InsertMode = TRUE;
-                Buffer->CursorInfo.dwSize = 20;
-            }
-            SetConsoleCursorInfo(GetStdHandle(STD_OUTPUT_HANDLE), &Buffer->CursorInfo);
-        } else if (KeyCode == VK_HOME) {
-            Buffer->CurrentOffset = 0;
-        } else if (KeyCode == VK_END) {
-            Buffer->CurrentOffset = Buffer->String.LengthInChars;
-        } else if (KeyCode == VK_DELETE) {
-
-            if (!YoriShOverwriteSelectionIfInInput(Buffer)) {
-                Count = InputRecord->Event.KeyEvent.wRepeatCount;
-                if (Count + Buffer->CurrentOffset > Buffer->String.LengthInChars) {
-                    Count = Buffer->String.LengthInChars - Buffer->CurrentOffset;
-                }
-
-                Buffer->CurrentOffset += Count;
-
-                YoriShBackspace(Buffer, Count);
-            }
-
-        } else if (KeyCode == VK_RETURN) {
-            if (Buffer->SearchMode) {
-                Buffer->SearchMode = FALSE;
-                YoriLibFreeStringContents(&Buffer->SearchString);
-            } else {
-                if (!YoriLibCopySelectionIfPresent(&Buffer->Selection)) {
-                    *TerminateInput = TRUE;
-                }
-                YoriLibClearSelection(&Buffer->Selection);
-                return TRUE;
-            }
+        if (YoriShProcessEnhancedKeyDown(Buffer, InputRecord, TerminateInput)) {
+            return TRUE;
         }
     } else if (CtrlMask == (RIGHT_CTRL_PRESSED | ENHANCED_KEY) ||
                CtrlMask == (LEFT_CTRL_PRESSED | ENHANCED_KEY) ||
@@ -1504,7 +1790,7 @@ YoriShProcessKeyDown(
                 PYORI_LIST_ENTRY NewEntry = NULL;
                 PYORI_SH_HISTORY_ENTRY HistoryEntry;
 
-                NewEntry = YoriLibGetPreviousListEntry(&YoriShCommandHistory, Buffer->HistoryEntryToUse);
+                NewEntry = YoriLibGetPreviousListEntry(&YoriShGlobal.CommandHistory, Buffer->HistoryEntryToUse);
                 HistoryEntry = CONTAINING_RECORD(Buffer->HistoryEntryToUse, YORI_SH_HISTORY_ENTRY, ListEntry);
                 YoriShRemoveOneHistoryEntry(HistoryEntry);
 
@@ -1518,9 +1804,8 @@ YoriShProcessKeyDown(
                 }
             }
         }
-    } else if (CtrlMask == LEFT_ALT_PRESSED || CtrlMask == RIGHT_ALT_PRESSED ||
-               CtrlMask == (LEFT_ALT_PRESSED | ENHANCED_KEY) ||
-               CtrlMask == (RIGHT_ALT_PRESSED | ENHANCED_KEY)) {
+    } else if (CtrlMask == LEFT_ALT_PRESSED ||
+               CtrlMask == (LEFT_ALT_PRESSED | ENHANCED_KEY)) {
         if (KeyCode >= '0' && KeyCode <= '9') {
             if (KeyCode == '0' && Buffer->NumericKeyValue == 0 && !Buffer->NumericKeyAnsiMode) {
                 Buffer->NumericKeyAnsiMode = TRUE;
@@ -1567,7 +1852,7 @@ YoriShProcessKeyDown(
         KeyCode != VK_CONTROL) {
 
         if (ClearSelection) {
-            YoriLibClearSelection(&Buffer->Selection);
+            YoriShClearInputSelections(Buffer);
         }
 
         YoriShPostKeyPress(Buffer);
@@ -1577,6 +1862,18 @@ YoriShProcessKeyDown(
     return FALSE;
 }
 
+/**
+ MultiByteToWideChar seems to be able to convert the upper 128 characters
+ from the OEM CP into Unicode correctly, but that leaves the low 32 characters
+ which don't map to their Unicode equivalents.  This is a simple translation
+ table for those characters.
+ */
+CONST TCHAR YoriShLowAsciiToUnicodeTable[] = {
+    0,      0x263a, 0x263b, 0x2665, 0x2666, 0x2663, 0x2660, 0x2022,
+    0x25d8, 0x25cb, 0x25d9, 0x2642, 0x2640, 0x266a, 0x266b, 0x263c,
+    0x25ba, 0x25c4, 0x2195, 0x203c, 0x00b6, 0x00a7, 0x25ac, 0x21a8,
+    0x2191, 0x2193, 0x2192, 0x2190, 0x221f, 0x2194, 0x25b2, 0x25bc
+};
 
 /**
  Perform processing related to when a key is released.  This is only used for
@@ -1611,18 +1908,22 @@ YoriShProcessKeyUp(
 
         HostKeyValue[0] = HostKeyValue[1] = 0;
 
-        MultiByteToWideChar(Buffer->NumericKeyAnsiMode?CP_ACP:CP_OEMCP,
-                            0,
-                            &SmallKeyValue,
-                            1,
-                            HostKeyValue,
-                            1);
+        if (!Buffer->NumericKeyAnsiMode && SmallKeyValue < 32) {
+            HostKeyValue[0] = YoriShLowAsciiToUnicodeTable[SmallKeyValue];
+        } else {
+            MultiByteToWideChar(Buffer->NumericKeyAnsiMode?CP_ACP:CP_OEMCP,
+                                0,
+                                &SmallKeyValue,
+                                1,
+                                HostKeyValue,
+                                1);
+        }
 
         if (HostKeyValue != 0) {
             YoriShPrepareForNextKey(Buffer);
             YoriShAddCStringToInput(Buffer, HostKeyValue);
             YoriShPostKeyPress(Buffer);
-            YoriLibClearSelection(&Buffer->Selection);
+            YoriShClearInputSelections(Buffer);
             KeyPressGenerated = TRUE;
         }
 
@@ -1631,6 +1932,107 @@ YoriShProcessKeyUp(
     }
 
     return KeyPressGenerated;
+}
+
+/**
+ Given an initial X,Y location, based on the user configurable break chars,
+ determine the initial X,Y location and ending X,Y location of any selection.
+ Note that currently this routine is limited to selecting along a single line,
+ although given this interface selection across lines is potentially possible.
+
+ @param ConsoleHandle Handle to the console output device.
+
+ @param InitialLocation The starting X,Y location for the selection.
+
+ @param BeginRange On successful completion, populated with the first char in
+        the selection.
+
+ @param EndRange On successful completion, populated with the final char in
+        the selection.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriShFindAutoBreakSelectionRange(
+    __in HANDLE ConsoleHandle,
+    __in COORD InitialLocation,
+    __out PCOORD BeginRange,
+    __out PCOORD EndRange
+    )
+{
+    YORI_STRING BreakChars;
+    SHORT StartOffset;
+    SHORT EndOffset;
+    CONSOLE_SCREEN_BUFFER_INFO ScreenInfo;
+    COORD ReadPoint;
+    DWORD CharsRead;
+    YORI_STRING LineBuffer;
+
+    if (!GetConsoleScreenBufferInfo(ConsoleHandle, &ScreenInfo)) {
+        return FALSE;
+    }
+
+    if (!YoriLibAllocateString(&LineBuffer, ScreenInfo.dwSize.X)) {
+        return FALSE;
+    }
+
+    YoriLibGetSelectionDoubleClickBreakChars(&BreakChars);
+
+    //
+    //  Read the line that the user is selecting.
+    //
+
+    ReadPoint.X = 0;
+    ReadPoint.Y = InitialLocation.Y;
+    if (!ReadConsoleOutputCharacter(ConsoleHandle, LineBuffer.StartOfString, ScreenInfo.dwSize.X, ReadPoint, &CharsRead)) {
+        YoriLibFreeStringContents(&BreakChars);
+        YoriLibFreeStringContents(&LineBuffer);
+        return FALSE;
+    }
+    LineBuffer.LengthInChars = CharsRead;
+
+    //
+    //  If the user double clicked on a break char, do nothing.
+    //
+
+    if (InitialLocation.X >= (SHORT)LineBuffer.LengthInChars ||
+        YoriLibFindLeftMostCharacter(&BreakChars, LineBuffer.StartOfString[InitialLocation.X]) != NULL) {
+        YoriLibFreeStringContents(&BreakChars);
+        YoriLibFreeStringContents(&LineBuffer);
+        return FALSE;
+    }
+
+    //
+    //  Nagivate left to find beginning of line or next break char.
+    //
+
+    for (StartOffset = InitialLocation.X; StartOffset > 0; StartOffset--) {
+        ReadPoint.X = (SHORT)(StartOffset - 1);
+        if (YoriLibFindLeftMostCharacter(&BreakChars, LineBuffer.StartOfString[ReadPoint.X]) != NULL) {
+            break;
+        }
+    }
+
+    //
+    //  Navigate right to find end of line or next break char.
+    //
+
+    for (EndOffset = InitialLocation.X; EndOffset < (SHORT)LineBuffer.LengthInChars - 1; EndOffset++) {
+        ReadPoint.X = (SHORT)(EndOffset + 1);
+        if (YoriLibFindLeftMostCharacter(&BreakChars, LineBuffer.StartOfString[ReadPoint.X]) != NULL) {
+            break;
+        }
+    }
+
+    YoriLibFreeStringContents(&BreakChars);
+    YoriLibFreeStringContents(&LineBuffer);
+
+    BeginRange->X = StartOffset;
+    BeginRange->Y = InitialLocation.Y;
+    EndRange->X = EndOffset;
+    EndRange->Y = InitialLocation.Y;
+
+    return TRUE;
 }
 
 /**
@@ -1657,15 +2059,52 @@ YoriShProcessMouseButtonDown(
     )
 {
     BOOL BufferChanged = FALSE;
+    BOOL CtrlPressed = FALSE;
 
     UNREFERENCED_PARAMETER(TerminateInput);
 
-    if (ButtonsPressed & FROM_LEFT_1ST_BUTTON_PRESSED) {
+    if (InputRecord->Event.MouseEvent.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) {
+        CtrlPressed = TRUE;
+    }
+
+
+    if (CtrlPressed &&
+        (ButtonsPressed & FROM_LEFT_1ST_BUTTON_PRESSED)) {
+
+        COORD BeginRange;
+        COORD EndRange;
+        HANDLE ConsoleHandle;
+
+        ConsoleHandle = Buffer->ConsoleOutputHandle;
+
+        if (YoriShFindAutoBreakSelectionRange(ConsoleHandle, InputRecord->Event.MouseEvent.dwMousePosition, &BeginRange, &EndRange) && BeginRange.Y == EndRange.Y) {
+
+            YORI_STRING StringToCopy;
+            DWORD LengthToCopy;
+            DWORD CharsRead;
+
+            LengthToCopy = EndRange.X - BeginRange.X + 1;
+
+            if (YoriLibAllocateString(&StringToCopy, LengthToCopy + 2)) {
+                if (ReadConsoleOutputCharacter(ConsoleHandle, StringToCopy.StartOfString, LengthToCopy, BeginRange, &CharsRead)) {
+                    StringToCopy.StartOfString[LengthToCopy] = ' ';
+                    StringToCopy.LengthInChars = LengthToCopy + 1;
+                    YoriShAddYoriStringToInput(Buffer, &StringToCopy);
+                    BufferChanged = TRUE;
+                }
+                YoriLibFreeStringContents(&StringToCopy);
+            }
+        }
+
+    } else if (ButtonsPressed & FROM_LEFT_1ST_BUTTON_PRESSED) {
         DWORD StringOffset;
 
-        BufferChanged = YoriLibCreateSelectionFromPoint(&Buffer->Selection,
-                                                        InputRecord->Event.MouseEvent.dwMousePosition.X,
-                                                        InputRecord->Event.MouseEvent.dwMousePosition.Y);
+        BufferChanged = YoriShClearMouseoverSelection(Buffer);
+
+        Buffer->SelectionStartedTick = GetTickCount();
+        BufferChanged |= YoriLibCreateSelectionFromPoint(&Buffer->Selection,
+                                                         InputRecord->Event.MouseEvent.dwMousePosition.X,
+                                                         InputRecord->Event.MouseEvent.dwMousePosition.Y);
 
         if (YoriShStringOffsetFromCoordinates(Buffer, InputRecord->Event.MouseEvent.dwMousePosition, &StringOffset)) {
             Buffer->CurrentOffset = StringOffset;
@@ -1675,7 +2114,7 @@ YoriShProcessMouseButtonDown(
         if (YoriLibIsSelectionActive(&Buffer->Selection)) {
             BufferChanged = YoriLibCopySelectionIfPresent(&Buffer->Selection);
             if (BufferChanged) {
-                YoriLibClearSelection(&Buffer->Selection);
+                YoriShClearInputSelections(Buffer);
             }
         } else {
             YORI_STRING ClipboardData;
@@ -1729,7 +2168,6 @@ YoriShProcessMouseButtonUp(
     return FALSE;
 }
 
-
 /**
  Perform processing related to when a mouse is double clicked.
 
@@ -1755,69 +2193,29 @@ YoriShProcessMouseDoubleClick(
 {
     BOOL BufferChanged = FALSE;
     HANDLE ConsoleHandle;
-    COORD ReadPoint;
-    TCHAR ReadChar;
-    DWORD CharsRead;
 
-    ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    ConsoleHandle = Buffer->ConsoleOutputHandle;
 
     UNREFERENCED_PARAMETER(TerminateInput);
 
     if (ButtonsPressed & FROM_LEFT_1ST_BUTTON_PRESSED) {
-        SHORT StartOffset;
-        SHORT EndOffset;
-        CONSOLE_SCREEN_BUFFER_INFO ScreenInfo;
-        YORI_STRING BreakChars;
+        COORD BeginRange;
+        COORD EndRange;
 
-        if (!GetConsoleScreenBufferInfo(ConsoleHandle, &ScreenInfo)) {
-            return FALSE;
-        }
-        YoriLibGetSelectionDoubleClickBreakChars(&BreakChars);
+        BufferChanged = YoriShClearInputSelections(Buffer);
 
-        BufferChanged = YoriLibClearSelection(&Buffer->Selection);
-
-        ReadChar = ' ';
-        ReadPoint.Y = InputRecord->Event.MouseEvent.dwMousePosition.Y;
-        ReadPoint.X = InputRecord->Event.MouseEvent.dwMousePosition.X;
-
-        //
-        //  If the user double clicked on a break char, do nothing.
-        //
-
-        ReadConsoleOutputCharacter(ConsoleHandle, &ReadChar, 1, ReadPoint, &CharsRead);
-        if (YoriLibFindLeftMostCharacter(&BreakChars, ReadChar) != NULL) {
-            YoriLibFreeStringContents(&BreakChars);
+        if (!YoriShFindAutoBreakSelectionRange(ConsoleHandle, InputRecord->Event.MouseEvent.dwMousePosition, &BeginRange, &EndRange)) {
             return FALSE;
         }
 
-        //
-        //  Nagivate left to find beginning of line or next break char.
-        //
-
-        for (StartOffset = InputRecord->Event.MouseEvent.dwMousePosition.X; StartOffset > 0; StartOffset--) {
-            ReadPoint.X = (SHORT)(StartOffset - 1);
-            ReadConsoleOutputCharacter(ConsoleHandle, &ReadChar, 1, ReadPoint, &CharsRead);
-            if (YoriLibFindLeftMostCharacter(&BreakChars, ReadChar) != NULL) {
-                break;
-            }
+        if (BeginRange.Y != EndRange.Y) {
+            return FALSE;
         }
 
-        //
-        //  Navigate right to find end of line or next break char.
-        //
-
-        for (EndOffset = InputRecord->Event.MouseEvent.dwMousePosition.X; EndOffset < ScreenInfo.dwSize.X - 1; EndOffset++) {
-            ReadPoint.X = (SHORT)(EndOffset + 1);
-            ReadConsoleOutputCharacter(ConsoleHandle, &ReadChar, 1, ReadPoint, &CharsRead);
-            if (YoriLibFindLeftMostCharacter(&BreakChars, ReadChar) != NULL) {
-                break;
-            }
-        }
-
-        YoriLibCreateSelectionFromRange(&Buffer->Selection, StartOffset, ReadPoint.Y, EndOffset, ReadPoint.Y);
+        Buffer->SelectionStartedTick = GetTickCount();
+        YoriLibCreateSelectionFromRange(&Buffer->Selection, BeginRange.X, BeginRange.Y, EndRange.X, EndRange.Y);
 
         BufferChanged = TRUE;
-        YoriLibFreeStringContents(&BreakChars);
     }
 
     return BufferChanged;
@@ -1843,23 +2241,59 @@ YoriShProcessMouseMove(
     __out PBOOL TerminateInput
     )
 {
+    DWORD CurrentTickCount;
+
     UNREFERENCED_PARAMETER(TerminateInput);
 
     if (InputRecord->Event.MouseEvent.dwButtonState & FROM_LEFT_1ST_BUTTON_PRESSED) {
 
-        if (YoriLibIsSelectionActive(&Buffer->Selection)) {
+        if (YoriLibSelectionInitialSpecified(&Buffer->Selection)) {
 
-            YoriLibUpdateSelectionToPoint(&Buffer->Selection,
-                                          InputRecord->Event.MouseEvent.dwMousePosition.X,
-                                          InputRecord->Event.MouseEvent.dwMousePosition.Y);
             //
-            //  Do one scroll immediately.  This allows the user to force scrolling
-            //  by moving the mouse outside the window.
+            //  If the window has been activated in the last 200ms, don't
+            //  update the selection.  The user is probably trying to click
+            //  in the window to activate it.  If the user is still holding
+            //  down the button and moving around after 200ms, then it'll
+            //  be treated as a selection.
             //
 
-            YoriLibPeriodicScrollForSelection(&Buffer->Selection);
+            CurrentTickCount = GetTickCount();
+            if (Buffer->WindowActivatedTick + 200 < CurrentTickCount &&
+                Buffer->SelectionStartedTick + 125 < CurrentTickCount) {
+
+                YoriLibUpdateSelectionToPoint(&Buffer->Selection,
+                                              InputRecord->Event.MouseEvent.dwMousePosition.X,
+                                              InputRecord->Event.MouseEvent.dwMousePosition.Y);
+
+                //
+                //  Do one scroll immediately.  This allows the user to force scrolling
+                //  by moving the mouse outside the window.
+                //
+
+                YoriLibPeriodicScrollForSelection(&Buffer->Selection);
+            }
 
             return TRUE;
+        }
+    } else if (!YoriLibIsSelectionActive(&Buffer->Selection) &&
+               YoriShGlobal.MouseoverEnabled) {
+
+        COORD BeginRange;
+        COORD EndRange;
+        HANDLE ConsoleHandle;
+
+        ConsoleHandle = Buffer->ConsoleOutputHandle;
+
+        if (YoriShFindAutoBreakSelectionRange(ConsoleHandle, InputRecord->Event.MouseEvent.dwMousePosition, &BeginRange, &EndRange) && BeginRange.Y == EndRange.Y) {
+
+            YoriShClearMouseoverSelection(Buffer);
+            YoriLibSetSelectionColor(&Buffer->Mouseover, YoriShGlobal.MouseoverColor);
+            YoriLibCreateSelectionFromRange(&Buffer->Mouseover, BeginRange.X, BeginRange.Y, EndRange.X, EndRange.Y);
+            return TRUE;
+        } else {
+            if (YoriShClearMouseoverSelection(Buffer)) {
+                return TRUE;
+            }
         }
     }
 
@@ -1898,7 +2332,7 @@ YoriShProcessMouseScroll(
     UNREFERENCED_PARAMETER(ButtonsPressed);
     UNREFERENCED_PARAMETER(TerminateInput);
 
-    ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    ConsoleHandle = Buffer->ConsoleOutputHandle;
     Direction = HIWORD(InputRecord->Event.MouseEvent.dwButtonState);
     if (!GetConsoleScreenBufferInfo(ConsoleHandle, &ScreenInfo)) {
         return FALSE;
@@ -1941,10 +2375,16 @@ YoriShProcessMouseScroll(
  @param Expression On successful completion, updated to point to the
         entered expression.
 
+ @param InputHandle The handle to the console input.
+
+ @param OutputHandle The handle to the console output.
+
  @return TRUE to indicate success, FALSE to indicate failure.
  */
 BOOL
 YoriShGetExpressionFromConsole(
+    __in HANDLE InputHandle,
+    __in HANDLE OutputHandle,
     __inout PYORI_STRING Expression
     )
 {
@@ -1958,16 +2398,14 @@ YoriShGetExpressionFromConsole(
     BOOL TerminateInput;
     BOOL RestartStateSaved = FALSE;
     BOOL SuggestionPopulated = FALSE;
-    HANDLE InputHandle;
-    HANDLE OutputHandle;
 
     ZeroMemory(&Buffer, sizeof(Buffer));
     Buffer.InsertMode = TRUE;
     Buffer.CursorInfo.bVisible = TRUE;
     Buffer.CursorInfo.dwSize = 20;
 
-    InputHandle = GetStdHandle(STD_INPUT_HANDLE);
-    OutputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    Buffer.ConsoleInputHandle = InputHandle;
+    Buffer.ConsoleOutputHandle = OutputHandle;
 
     SetConsoleCursorInfo(OutputHandle, &Buffer.CursorInfo);
     SetConsoleMode(InputHandle, ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT);
@@ -1977,8 +2415,8 @@ YoriShGetExpressionFromConsole(
         return FALSE;
     }
 
-    YoriShConfigureInputSettings(&Buffer);
-    YoriShConfigureMouseForPrompt(&Buffer);
+    YoriShConfigureInputSettings();
+    YoriShConfigureMouseForPrompt(InputHandle);
     SetConsoleCtrlHandler(YoriShAppCloseCtrlHandler, TRUE);
 
     while (TRUE) {
@@ -2029,10 +2467,10 @@ YoriShGetExpressionFromConsole(
                 }
 
             } else if (InputRecord->EventType == WINDOW_BUFFER_SIZE_EVENT) {
-
-                ReDisplayRequired |= YoriLibClearSelection(&Buffer.Selection);
+                ReDisplayRequired |= YoriShClearInputSelections(&Buffer);
             } else if (InputRecord->EventType == FOCUS_EVENT) {
                 if (InputRecord->Event.FocusEvent.bSetFocus) {
+                    Buffer.WindowActivatedTick = GetTickCount();
                     YoriShSetWindowState(YORI_SH_TASK_COMPLETE);
                 }
             }
@@ -2072,7 +2510,7 @@ YoriShGetExpressionFromConsole(
 
         SuggestionPopulated = FALSE;
         if (Buffer.SuggestionString.LengthInChars > 0 ||
-            Buffer.DelayBeforeSuggesting == 0 ||
+            YoriShGlobal.DelayBeforeSuggesting == 0 ||
             Buffer.TabContext.TabCount != 0) {
 
             SuggestionPopulated = TRUE;
@@ -2081,7 +2519,7 @@ YoriShGetExpressionFromConsole(
         while (TRUE) {
             if (YoriLibIsPeriodicScrollActive(&Buffer.Selection)) {
 
-                err = WaitForSingleObject(InputHandle, 250);
+                err = WaitForSingleObject(InputHandle, 100);
                 if (err == WAIT_OBJECT_0) {
                     break;
                 }
@@ -2089,7 +2527,7 @@ YoriShGetExpressionFromConsole(
                     YoriLibPeriodicScrollForSelection(&Buffer.Selection);
                 }
             } else if (!SuggestionPopulated) {
-                err = WaitForSingleObject(InputHandle, Buffer.DelayBeforeSuggesting);
+                err = WaitForSingleObject(InputHandle, YoriShGlobal.DelayBeforeSuggesting);
                 if (err == WAIT_OBJECT_0) {
                     break;
                 }
@@ -2167,7 +2605,7 @@ YoriShGetExpression(
     InputHandle = GetStdHandle(STD_INPUT_HANDLE);
     OutputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
     if (GetConsoleMode(InputHandle, &ConsoleMode) && GetConsoleMode(OutputHandle, &ConsoleMode)) {
-        return YoriShGetExpressionFromConsole(Expression);
+        return YoriShGetExpressionFromConsole(InputHandle, OutputHandle, Expression);
     }
 
     SetConsoleMode(InputHandle, ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_ECHO_INPUT);

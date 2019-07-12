@@ -3,7 +3,7 @@
  *
  * Yori shell push and pop current directories
  *
- * Copyright (c) 2018 Malcolm J. Smith
+ * Copyright (c) 2018-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -36,8 +36,9 @@ CHAR strPushdHelpText[] =
         "\n"
         "Push the current directory onto a stack and change to a new directory.\n"
         "\n"
-        "PUSHD [-license] -l|<directory>\n"
+        "PUSHD [-license] -c|-l|<directory>\n"
         "\n"
+        "   -c             Display the number of directories on the pushd stack\n"
         "   -l             List outstanding directories on the pushd stack\n";
 
 /**
@@ -46,7 +47,7 @@ CHAR strPushdHelpText[] =
 BOOL
 PushdHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("PushD %i.%i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("PushD %i.%02i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -62,8 +63,9 @@ CHAR strPopdHelpText[] =
         "\n"
         "Pop a previous current directory from the stack.\n"
         "\n"
-        "POPD [-license] [-l]\n"
+        "POPD [-license] [-c|-l]\n"
         "\n"
+        "   -c             Display the number of directories on the pushd stack\n"
         "   -l             List outstanding directories on the pushd stack\n";
 
 /**
@@ -72,7 +74,7 @@ CHAR strPopdHelpText[] =
 BOOL
 PopdHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("PopD %i.%i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("PopD %i.%02i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -123,6 +125,7 @@ PushdNotifyUnload()
         StackLocation = CONTAINING_RECORD(ListEntry, PUSHD_STACK, StackLinks);
         ListEntry = YoriLibGetPreviousListEntry(&PushdStack, ListEntry);
         YoriLibRemoveListItem(&StackLocation->StackLinks);
+        YoriCallDecrementPromptRecursionDepth();
         YoriLibFree(StackLocation);
     }
 }
@@ -152,6 +155,40 @@ PushdDisplayCurrentStack()
 }
 
 /**
+ Display the number of entries on the current pushd stack.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+PushdDisplayCurrentStackCount()
+{
+    PYORI_LIST_ENTRY ListEntry;
+    PPUSHD_STACK StackLocation;
+    DWORD Count = 0;
+
+    if (PushdStack.Next != NULL) {
+        ListEntry = YoriLibGetPreviousListEntry(&PushdStack, NULL);
+        while(ListEntry != NULL) {
+            Count++;
+            StackLocation = CONTAINING_RECORD(ListEntry, PUSHD_STACK, StackLinks);
+            ListEntry = YoriLibGetPreviousListEntry(&PushdStack, ListEntry);
+        }
+    }
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%i\n"), Count);
+    return TRUE;
+}
+
+/**
+ The main entrypoint for the popd command.
+
+ @param ArgC The number of arguments.
+
+ @param ArgV The argument array.
+
+ @return ExitCode, zero for success, nonzero for failure.
+ */
+
+/**
  The main entrypoint for the popd command.
 
  @param ArgC The number of arguments.
@@ -170,6 +207,7 @@ YoriCmd_POPD(
     DWORD i;
     BOOL ArgumentUnderstood;
     BOOL ListStack = FALSE;
+    BOOL CountStack = FALSE;
     PYORI_LIST_ENTRY ListEntry;
     PPUSHD_STACK StackLocation;
     YORI_STRING Arg;
@@ -184,9 +222,14 @@ YoriCmd_POPD(
                 PopdHelp();
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("license")) == 0) {
-                YoriLibDisplayMitLicense(_T("2018"));
+                YoriLibDisplayMitLicense(_T("2018-2019"));
                 return EXIT_SUCCESS;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("c")) == 0) {
+                CountStack = TRUE;
+                ListStack = FALSE;
+                ArgumentUnderstood = TRUE;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("l")) == 0) {
+                CountStack = FALSE;
                 ListStack = TRUE;
                 ArgumentUnderstood = TRUE;
             }
@@ -197,7 +240,12 @@ YoriCmd_POPD(
         }
     }
 
-    if (ListStack) {
+    if (CountStack) {
+        if (PushdDisplayCurrentStackCount()) {
+            return EXIT_SUCCESS;
+        }
+        return EXIT_FAILURE;
+    } else if (ListStack) {
         if (PushdDisplayCurrentStack()) {
             return EXIT_SUCCESS;
         }
@@ -215,6 +263,7 @@ YoriCmd_POPD(
 
     StackLocation = CONTAINING_RECORD(ListEntry, PUSHD_STACK, StackLinks);
     YoriLibRemoveListItem(&StackLocation->StackLinks);
+    YoriCallDecrementPromptRecursionDepth();
 
     if (PushdStack.Next == &PushdStack) {
         YORI_STRING PopdCmd;
@@ -256,6 +305,7 @@ YoriCmd_PUSHD(
     YORI_STRING ChdirCmd;
     YORI_STRING Arg;
     BOOL ListStack = FALSE;
+    BOOL CountStack = FALSE;
 
     YoriLibLoadNtDllFunctions();
     YoriLibLoadKernel32Functions();
@@ -271,10 +321,15 @@ YoriCmd_PUSHD(
                 PushdHelp();
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("license")) == 0) {
-                YoriLibDisplayMitLicense(_T("2018"));
+                YoriLibDisplayMitLicense(_T("2018-2019"));
                 return EXIT_SUCCESS;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("c")) == 0) {
+                CountStack = TRUE;
+                ListStack = FALSE;
+                ArgumentUnderstood = TRUE;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("l")) == 0) {
                 ListStack = TRUE;
+                CountStack = FALSE;
                 ArgumentUnderstood = TRUE;
             }
         } else {
@@ -288,7 +343,12 @@ YoriCmd_PUSHD(
         }
     }
 
-    if (ListStack) {
+    if (CountStack) {
+        if (PushdDisplayCurrentStackCount()) {
+            return EXIT_SUCCESS;
+        }
+        return EXIT_FAILURE;
+    } else if (ListStack) {
         if (PushdDisplayCurrentStack()) {
             return EXIT_SUCCESS;
         }
@@ -340,6 +400,7 @@ YoriCmd_PUSHD(
     }
 
     YoriLibAppendList(&PushdStack, &NewStackEntry->StackLinks);
+    YoriCallIncrementPromptRecursionDepth();
 
     return EXIT_SUCCESS;
 }

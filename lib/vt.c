@@ -72,6 +72,13 @@ YoriLibVtGetDefaultColor()
 {
     if (YoriLibVtResetColorSet) {
         return YoriLibVtResetColor;
+    } else {
+        CONSOLE_SCREEN_BUFFER_INFO ConsoleInfo;
+        if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &ConsoleInfo)) {
+            YoriLibVtResetColor = ConsoleInfo.wAttributes;
+            YoriLibVtResetColorSet = TRUE;
+            return YoriLibVtResetColor;
+        }
     }
     return DEFAULT_COLOR;
 }
@@ -297,14 +304,6 @@ YoriLibConsoleProcessAndIgnoreEscape(
 
     return TRUE;
 }
-
-#ifndef COMMON_LVB_UNDERSCORE
-/**
- Define for the console's underline functionality if the compiler doesn't
- know about it.
- */
-#define COMMON_LVB_UNDERSCORE      0x8000
-#endif
 
 /**
  Given a starting color and a VT sequence which may change it, generate the
@@ -959,22 +958,15 @@ YoriLibOutputToDevice(
 }
 
 /**
- Convert a Win32 text attribute into an ANSI escape value.  This happens
- because the two disagree on RGB order.
- */
-#define YoriLibWindowsToAnsi(COL)      \
-    (((COL) & FOREGROUND_BLUE?4:0)|    \
-     ((COL) & FOREGROUND_GREEN?2:0)|   \
-     ((COL) & FOREGROUND_RED?1:0))
-
-
-/**
  Generate a string that is the VT100 representation for the specified Win32
  attribute.
 
  @param String On successful completion, updated to contain the VT100
         representation for the attribute.  This string can be reallocated
         within this routine.
+
+ @param Ctrl The control part of the attribute that specifies whether the
+        default window foreground or background should be applied.
 
  @param Attribute The attribute to convert to a VT100 escape sequence.
 
@@ -983,28 +975,44 @@ YoriLibOutputToDevice(
 BOOL
 YoriLibVtStringForTextAttribute(
     __inout PYORI_STRING String,
+    __in UCHAR Ctrl,
     __in WORD Attribute
     )
 {
     CHAR  AnsiForeground;
     CHAR  AnsiBackground;
 
-    if (String->LengthAllocated < sizeof("E[0;999;999;1m")) {
+    if (String->LengthAllocated < YORI_MAX_INTERNAL_VT_ESCAPE_CHARS) {
         YoriLibFreeStringContents(String);
-        if (!YoriLibAllocateString(String, sizeof("E0;999;999;1m"))) {
+        if (!YoriLibAllocateString(String, YORI_MAX_INTERNAL_VT_ESCAPE_CHARS)) {
             return FALSE;
         }
     }
 
-    AnsiForeground = (CHAR)YoriLibWindowsToAnsi(Attribute&7);
-    AnsiBackground = (CHAR)YoriLibWindowsToAnsi((Attribute>>4)&7);
+    if (Ctrl & YORILIB_ATTRCTRL_WINDOW_BG) {
+        AnsiBackground = 49;
+    } else {
+        AnsiBackground = (CHAR)YoriLibWindowsToAnsi((Attribute>>4)&7);
+        if (Attribute & BACKGROUND_INTENSITY) {
+            AnsiBackground += 100;
+        } else {
+            AnsiBackground += 40;
+        }
+    }
+
+    if (Ctrl & YORILIB_ATTRCTRL_WINDOW_FG) {
+        AnsiForeground = 39;
+    } else {
+        AnsiForeground = (CHAR)YoriLibWindowsToAnsi(Attribute&7);
+        AnsiForeground += 30;
+    }
 
     String->LengthInChars = YoriLibSPrintfS(String->StartOfString,
                                             String->LengthAllocated,
                                             _T("%c[0;%i;%i%sm"),
                                             27,
-                                            (Attribute & BACKGROUND_INTENSITY)?100+AnsiBackground:40+AnsiBackground,
-                                            30+AnsiForeground,
+                                            AnsiBackground,
+                                            AnsiForeground,
                                             (Attribute & FOREGROUND_INTENSITY)?_T(";1"):_T("")
                                             );
 
@@ -1020,6 +1028,9 @@ YoriLibVtStringForTextAttribute(
 
  @param Flags Flags indicating output behavior.
 
+ @param Ctrl The control part of the attribute that specifies whether the
+        default window foreground or background should be applied.
+
  @param Attribute The Win32 color code to make active.
 
  @return TRUE to indicate success, FALSE to indicate failure.
@@ -1028,10 +1039,11 @@ BOOL
 YoriLibVtSetConsoleTextAttributeOnDevice(
     __in HANDLE hOut,
     __in DWORD Flags,
+    __in UCHAR Ctrl,
     __in WORD Attribute
     )
 {
-    TCHAR OutputStringBuffer[sizeof("E[0;999;999;1m")];
+    TCHAR OutputStringBuffer[YORI_MAX_INTERNAL_VT_ESCAPE_CHARS];
     YORI_STRING OutputString;
 
     YoriLibInitEmptyString(&OutputString);
@@ -1043,7 +1055,7 @@ YoriLibVtSetConsoleTextAttributeOnDevice(
     //  fail.
     //
 
-    if (!YoriLibVtStringForTextAttribute(&OutputString, Attribute)) {
+    if (!YoriLibVtStringForTextAttribute(&OutputString, Ctrl, Attribute)) {
         ASSERT(FALSE);
         return FALSE;
     }
@@ -1079,7 +1091,7 @@ YoriLibVtSetConsoleTextAttribute(
     } else {
         hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     }
-    return YoriLibVtSetConsoleTextAttributeOnDevice(hOut, Flags, Attribute);
+    return YoriLibVtSetConsoleTextAttributeOnDevice(hOut, Flags, 0, Attribute);
 }
 
 /**
@@ -1273,6 +1285,7 @@ YoriLibQueryConsoleCapabilities(
     //  Load any user specified support from the environment.
     //
 
+    YoriLibInitEmptyString(&TermString);
     if (!YoriLibAllocateAndGetEnvironmentVariable(_T("YORITERM"), &TermString)) {
         return TRUE;
     }

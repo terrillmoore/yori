@@ -73,17 +73,6 @@ typedef struct _YORI_SH_ITASKBARLIST_VTBL {
 } YORI_SH_ITASKBARLIST_VTBL, *PYORI_SH_ITASKBARLIST_VTBL;
 
 /**
- Set to TRUE once the process has initialized COM.
- */
-BOOLEAN YoriShInitializedCom = FALSE;
-
-/**
- Set to TRUE if the process has set the taskbar button to any non-default
- state.
- */
-BOOLEAN YoriShTaskUiActive = FALSE;
-
-/**
  Pointer to the object implementing ITaskbarList3.
  */
 PYORI_SH_TASKBARLIST YoriShTaskbarList; 
@@ -114,15 +103,13 @@ YoriShSetWindowState(
     )
 {
     HRESULT hr;
-    UNREFERENCED_PARAMETER(State);
 
     //
-    //  If no UI has been displayed and we're being asked to clear it, do
-    //  nothing.  This is to avoid loading COM etc when the user isn't
-    //  using the feature.
+    //  Subshells shouldn't do anything.  Let the parent shell display
+    //  progress and track completion.
     //
 
-    if (State == YORI_SH_TASK_COMPLETE && !YoriShTaskUiActive) {
+    if (YoriShGlobal.SubShell || YoriShGlobal.SuppressTaskUi) {
         return TRUE;
     }
 
@@ -130,7 +117,26 @@ YoriShSetWindowState(
         return FALSE;
     }
 
-    if (!YoriShInitializedCom) {
+    //
+    //  If no UI has been displayed and we're being asked to clear it, do
+    //  nothing.  This is to avoid loading COM etc when the user isn't
+    //  using the feature.  If we're being invoked from within a builtin
+    //  command (ie., script), it's okay to start the progress indicator but
+    //  don't display success or fail until the builtin is done.
+    //
+
+    if (State != YORI_SH_TASK_IN_PROGRESS) {
+
+        if (!YoriShGlobal.TaskUiActive) {
+            return TRUE;
+        }
+
+        if (YoriShGlobal.RecursionDepth > 0) {
+            return TRUE;
+        }
+    }
+
+    if (!YoriShGlobal.InitializedCom) {
 
         YoriLibLoadOle32Functions();
         if (DllOle32.pCoInitialize == NULL || DllOle32.pCoCreateInstance == NULL) {
@@ -142,7 +148,7 @@ YoriShSetWindowState(
             return FALSE;
         }
 
-        YoriShInitializedCom = TRUE;
+        YoriShGlobal.InitializedCom = TRUE;
     }
 
     if (YoriShTaskbarList == NULL) {
@@ -155,17 +161,17 @@ YoriShSetWindowState(
     if (State == YORI_SH_TASK_SUCCESS) {
         YoriShTaskbarList->Vtbl->SetProgressState(YoriShTaskbarList, DllKernel32.pGetConsoleWindow(), 0x2);
         YoriShTaskbarList->Vtbl->SetProgressValue(YoriShTaskbarList, DllKernel32.pGetConsoleWindow(), 100, 100);
-        YoriShTaskUiActive = TRUE;
+        YoriShGlobal.TaskUiActive = TRUE;
     } else if (State == YORI_SH_TASK_FAILED) {
         YoriShTaskbarList->Vtbl->SetProgressState(YoriShTaskbarList, DllKernel32.pGetConsoleWindow(), 0x4);
         YoriShTaskbarList->Vtbl->SetProgressValue(YoriShTaskbarList, DllKernel32.pGetConsoleWindow(), 100, 100);
-        YoriShTaskUiActive = TRUE;
+        YoriShGlobal.TaskUiActive = TRUE;
     } else if (State == YORI_SH_TASK_IN_PROGRESS) {
         YoriShTaskbarList->Vtbl->SetProgressState(YoriShTaskbarList, DllKernel32.pGetConsoleWindow(), 0x1);
-        YoriShTaskUiActive = TRUE;
+        YoriShGlobal.TaskUiActive = TRUE;
     } else if (State == YORI_SH_TASK_COMPLETE) {
         YoriShTaskbarList->Vtbl->SetProgressState(YoriShTaskbarList, DllKernel32.pGetConsoleWindow(), 0);
-        YoriShTaskUiActive = FALSE;
+        YoriShGlobal.TaskUiActive = FALSE;
     }
 
     return TRUE;

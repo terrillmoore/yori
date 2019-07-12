@@ -46,7 +46,7 @@ CHAR strMoreHelpText[] =
 BOOL
 MoreHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("More %i.%i\n"), MORE_VER_MAJOR, MORE_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("More %i.%02i\n"), MORE_VER_MAJOR, MORE_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -115,6 +115,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("s")) == 0) {
                 Recursive = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                StartArg = i + 1;
+                ArgumentUnderstood = TRUE;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -132,7 +136,7 @@ ENTRYPOINT(
         return EXIT_FAILURE;
     }
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         InitComplete = MoreInitContext(&MoreContext, 0, NULL, Recursive, BasicEnumeration, DebugDisplay);
     } else {
         InitComplete = MoreInitContext(&MoreContext, ArgC-StartArg, &ArgV[StartArg], Recursive, BasicEnumeration, DebugDisplay);

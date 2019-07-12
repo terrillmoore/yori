@@ -59,7 +59,7 @@ YORI_CMD_BUILTIN YoriCmd_YCLIP;
 /**
  Declaration for the builtin command.
  */
-YORI_CMD_BUILTIN YoriCmd_CLS;
+YORI_CMD_BUILTIN YoriCmd_YCLS;
 
 /**
  Declaration for the builtin command.
@@ -109,12 +109,27 @@ YORI_CMD_BUILTIN YoriCmd_YDIR;
 /**
  Declaration for the builtin command.
  */
+YORI_CMD_BUILTIN YoriCmd_YDU;
+
+/**
+ Declaration for the builtin command.
+ */
 YORI_CMD_BUILTIN YoriCmd_YECHO;
 
 /**
  Declaration for the builtin command.
  */
+YORI_CMD_BUILTIN YoriCmd_YENV;
+
+/**
+ Declaration for the builtin command.
+ */
 YORI_CMD_BUILTIN YoriCmd_YERASE;
+
+/**
+ Declaration for the builtin command.
+ */
+YORI_CMD_BUILTIN YoriCmd_YERR;
 
 /**
  Declaration for the builtin command.
@@ -160,6 +175,11 @@ YORI_CMD_BUILTIN YoriCmd_YGET;
  Declaration for the builtin command.
  */
 YORI_CMD_BUILTIN YoriCmd_GRPCMP;
+
+/**
+ Declaration for the builtin command.
+ */
+YORI_CMD_BUILTIN YoriCmd_YHASH;
 
 /**
  Declaration for the builtin command.
@@ -219,6 +239,11 @@ YORI_CMD_BUILTIN YoriCmd_LSOF;
 /**
  Declaration for the builtin command.
  */
+YORI_CMD_BUILTIN YoriCmd_YMEM;
+
+/**
+ Declaration for the builtin command.
+ */
 YORI_CMD_BUILTIN YoriCmd_YMKDIR;
 
 /**
@@ -260,6 +285,11 @@ YORI_CMD_BUILTIN YoriCmd_YPATH;
  Declaration for the builtin command.
  */
 YORI_CMD_BUILTIN YoriCmd_YPAUSE;
+
+/**
+ Declaration for the builtin command.
+ */
+YORI_CMD_BUILTIN YoriCmd_YPS;
 
 /**
  Declaration for the builtin command.
@@ -314,12 +344,22 @@ YORI_CMD_BUILTIN YoriCmd_SETVER;
 /**
  Declaration for the builtin command.
  */
+YORI_CMD_BUILTIN YoriCmd_YSHUTDN;
+
+/**
+ Declaration for the builtin command.
+ */
 YORI_CMD_BUILTIN YoriCmd_SLEEP;
 
 /**
  Declaration for the builtin command.
  */
 YORI_CMD_BUILTIN YoriCmd_YSPLIT;
+
+/**
+ Declaration for the builtin command.
+ */
+YORI_CMD_BUILTIN YoriCmd_YSPONGE;
 
 /**
  Declaration for the builtin command.
@@ -349,6 +389,11 @@ YORI_CMD_BUILTIN YoriCmd_TEE;
 /**
  Declaration for the builtin command.
  */
+YORI_CMD_BUILTIN YoriCmd_TIMETHIS;
+
+/**
+ Declaration for the builtin command.
+ */
 YORI_CMD_BUILTIN YoriCmd_YTITLE;
 
 /**
@@ -370,6 +415,11 @@ YORI_CMD_BUILTIN YoriCmd_YTYPE;
  Declaration for the builtin command.
  */
 YORI_CMD_BUILTIN YoriCmd_VER;
+
+/**
+ Declaration for the builtin command.
+ */
+YORI_CMD_BUILTIN YoriCmd_VHDTOOL;
 
 /**
  Declaration for the builtin command.
@@ -426,7 +476,6 @@ YoriShBuiltins[] = {
                     {_T("CAB"),       YoriCmd_CAB},
                     {_T("CAL"),       YoriCmd_YCAL},
                     {_T("CHDIR"),     YoriCmd_CHDIR},
-                    {_T("CLS"),       YoriCmd_CLS},
                     {_T("COLOR"),     YoriCmd_COLOR},
                     {_T("CSHOT"),     YoriCmd_CSHOT},
                     {_T("CVTVT"),     YoriCmd_CVTVT},
@@ -463,15 +512,18 @@ YoriShBuiltins[] = {
                     {_T("SYNC"),      YoriCmd_SYNC},
                     {_T("TAIL"),      YoriCmd_TAIL},
                     {_T("TEE"),       YoriCmd_TEE},
+                    {_T("TIMETHIS"),  YoriCmd_TIMETHIS},
                     {_T("TOUCH"),     YoriCmd_TOUCH},
                     {_T("TRUE"),      YoriCmd_TRUE},
                     {_T("VER"),       YoriCmd_VER},
+                    {_T("VHDTOOL"),   YoriCmd_VHDTOOL},
                     {_T("WAIT"),      YoriCmd_WAIT},
                     {_T("WHICH"),     YoriCmd_WHICH},
                     {_T("WININFO"),   YoriCmd_WININFO},
                     {_T("WINPOS"),    YoriCmd_WINPOS},
                     {_T("YCAL"),      YoriCmd_YCAL},
                     {_T("YCLIP"),     YoriCmd_YCLIP},
+                    {_T("YCLS"),      YoriCmd_YCLS},
                     {_T("YCOMPACT"),  YoriCmd_YCOMPACT},
                     {_T("YCOPY"),     YoriCmd_YCOPY},
                     {_T("YCUT"),      YoriCmd_YCUT},
@@ -479,11 +531,16 @@ YoriShBuiltins[] = {
                     {_T("YDBG"),      YoriCmd_YDBG},
                     {_T("YDF"),       YoriCmd_YDF},
                     {_T("YDIR"),      YoriCmd_YDIR},
+                    {_T("YDU"),       YoriCmd_YDU},
                     {_T("YECHO"),     YoriCmd_YECHO},
+                    {_T("YENV"),      YoriCmd_YENV},
                     {_T("YERASE"),    YoriCmd_YERASE},
+                    {_T("YERR"),      YoriCmd_YERR},
                     {_T("YEXPR"),     YoriCmd_YEXPR},
                     {_T("YGET"),      YoriCmd_YGET},
+                    {_T("YHASH"),     YoriCmd_YHASH},
                     {_T("YHELP"),     YoriCmd_YHELP},
+                    {_T("YMEM"),      YoriCmd_YMEM},
                     {_T("YMKDIR"),    YoriCmd_YMKDIR},
                     {_T("YMKLINK"),   YoriCmd_YMKLINK},
                     {_T("YMORE"),     YoriCmd_YMORE},
@@ -492,9 +549,12 @@ YoriShBuiltins[] = {
                     {_T("YPATH"),     YoriCmd_YPATH},
                     {_T("YPAUSE"),    YoriCmd_YPAUSE},
                     {_T("YPM"),       YoriCmd_YPM},
+                    {_T("YPS"),       YoriCmd_YPS},
                     {_T("YRMDIR"),    YoriCmd_YRMDIR},
                     {_T("YS"),        YoriCmd_YS},
+                    {_T("YSHUTDN"),   YoriCmd_YSHUTDN},
                     {_T("YSPLIT"),    YoriCmd_YSPLIT},
+                    {_T("YSPONGE"),   YoriCmd_YSPONGE},
                     {_T("YSTART"),    YoriCmd_YSTART},
                     {_T("YTITLE"),    YoriCmd_YTITLE},
                     {_T("YTYPE"),     YoriCmd_YTYPE},
@@ -506,11 +566,12 @@ YoriShBuiltins[] = {
 /**
  A table of initial alias to value mappings to populate.
  */
-YORI_SH_DEFAULT_ALIAS_ENTRY
+CONST YORI_SH_DEFAULT_ALIAS_ENTRY
 YoriShDefaultAliasEntries[] = {
     {_T("cal"),      _T("ycal $*$")},
     {_T("cd"),       _T("chdir $*$")},
     {_T("clip"),     _T("yclip $*$")},
+    {_T("cls"),      _T("ycls $*$")},
     {_T("compact"),  _T("ycompact $*$")},
     {_T("copy"),     _T("ycopy $*$")},
     {_T("cut"),      _T("ycut $*$")},
@@ -518,13 +579,18 @@ YoriShDefaultAliasEntries[] = {
     {_T("del"),      _T("yerase $*$")},
     {_T("df"),       _T("ydf $*$")},
     {_T("dir"),      _T("ydir $*$")},
+    {_T("du"),       _T("ydu $*$")},
     {_T("echo"),     _T("yecho $*$")},
+    {_T("env"),      _T("yenv $*$")},
     {_T("erase"),    _T("yerase $*$")},
     {_T("expr"),     _T("yexpr $*$")},
+    {_T("hash"),     _T("yhash $*$")},
     {_T("head"),     _T("ytype -h $*$")},
     {_T("help"),     _T("yhelp $*$")},
-    {_T("htmlclip"), _T("clip -h $*$")},
+    {_T("htmlclip"), _T("yclip -h $*$")},
     {_T("md"),       _T("ymkdir $*$")},
+    {_T("md5sum"),   _T("yhash -a md5 $*$")},
+    {_T("mem"),      _T("ymem $*$")},
     {_T("mkdir"),    _T("ymkdir $*$")},
     {_T("mklink"),   _T("ymklink $*$")},
     {_T("more"),     _T("ymore $*$")},
@@ -534,12 +600,19 @@ YoriShDefaultAliasEntries[] = {
     {_T("path"),     _T("ypath $*$")},
     {_T("pause"),    _T("ypause $*$")},
     {_T("pwd"),      _T("ypath . $*$")},
+    {_T("ps"),       _T("yps $*$")},
     {_T("rd"),       _T("yrmdir $*$")},
     {_T("ren"),      _T("ymove $*$")},
     {_T("rename"),   _T("ymove $*$")},
     {_T("rmdir"),    _T("yrmdir $*$")},
+    {_T("sha1sum"),  _T("yhash -a sha1 $*$")},
+    {_T("sha256sum"),_T("yhash -a sha256 $*$")},
+    {_T("sha384sum"),_T("yhash -a sha384 $*$")},
+    {_T("sha512sum"),_T("yhash -a sha512 $*$")},
+    {_T("shutdn"),   _T("yshutdn $*$")},
     {_T("start"),    _T("ystart $*$")},
     {_T("split"),    _T("ysplit $*$")},
+    {_T("sponge"),   _T("ysponge $*$")},
     {_T("time"),     _T("ydate -t $*$")},
     {_T("title"),    _T("ytitle $*$")},
     {_T("type"),     _T("ytype $*$")},
@@ -548,12 +621,19 @@ YoriShDefaultAliasEntries[] = {
 };
 
 /**
- Return the number of elements in the YoriShDefaultAliasEntries array.
+ Register default aliases in a full static build.  This is done here to ensure
+ a static binary doesn't need other files to be useful.
+
+ @return TRUE to indicate success.
  */
-DWORD
-YoriShDefaultAliasEntriesCount()
+BOOL
+YoriShRegisterDefaultAliases()
 {
-    return sizeof(YoriShDefaultAliasEntries)/sizeof(YoriShDefaultAliasEntries[0]);
+    DWORD Count;
+    for (Count = 0; Count < sizeof(YoriShDefaultAliasEntries)/sizeof(YoriShDefaultAliasEntries[0]); Count++) {
+        YoriShAddAliasLiteral(YoriShDefaultAliasEntries[Count].Alias, YoriShDefaultAliasEntries[Count].Value, TRUE);
+    }
+    return TRUE;
 }
 
 // vim:sw=4:ts=4:et:

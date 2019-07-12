@@ -35,9 +35,10 @@ CHAR strFInfoHelpText[] =
         "\n"
         "Output information about file metadata.\n"
         "\n"
-        "FINFO [-license] [-b] [-f fmt] [-s] <file>...\n"
+        "FINFO [-license] [-b] [-d] [-f fmt] [-s] <file>...\n"
         "\n"
         "   -b             Use basic search criteria for files only\n"
+        "   -d             Return directories rather than directory contents\n"
         "   -f             Specify a custom format string\n"
         "   -s             Process files from all subdirectories\n";
 
@@ -71,6 +72,11 @@ typedef struct _FINFO_CONTEXT {
      Records the total number of files processed.
      */
     LONGLONG FilesFound;
+
+    /**
+     Records the total number of files processed for each argument processed.
+     */
+    LONGLONG FilesFoundThisArg;
 
 } FINFO_CONTEXT, *PFINFO_CONTEXT;
 
@@ -1323,7 +1329,7 @@ FInfoHelp()
     DWORD Count;
     TCHAR NameWithQualifiers[32];
 
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("FInfo %i.%i\n"), FINFO_VER_MAJOR, FINFO_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("FInfo %i.%02i\n"), FINFO_VER_MAJOR, FINFO_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -1382,7 +1388,7 @@ FInfoExpandVariables(
 
  @param Depth Specifies recursion depth.  Ignored in this application.
 
- @param FInfoContext Pointer to the finfo context structure indicating the
+ @param Context Pointer to the finfo context structure indicating the
         action to perform and populated with the file and line count found.
 
  @return TRUE to continute enumerating, FALSE to abort.
@@ -1390,19 +1396,33 @@ FInfoExpandVariables(
 BOOL
 FInfoFileFoundCallback(
     __in PYORI_STRING FilePath,
-    __in PWIN32_FIND_DATA FileInfo,
+    __in_opt PWIN32_FIND_DATA FileInfo,
     __in DWORD Depth,
-    __in PFINFO_CONTEXT FInfoContext
+    __in PVOID Context
     )
 {
     YORI_STRING DisplayString;
+    WIN32_FIND_DATA LocalFileInfo;
+    PWIN32_FIND_DATA FileInfoToUse;
+    PFINFO_CONTEXT FInfoContext;
 
     UNREFERENCED_PARAMETER(Depth);
     ASSERT(YoriLibIsStringNullTerminated(FilePath));
 
+    FInfoContext = (PFINFO_CONTEXT)Context;
+
+    if (FileInfo != NULL) {
+        FileInfoToUse = FileInfo;
+    } else {
+        ZeroMemory(&LocalFileInfo, sizeof(LocalFileInfo));
+        YoriLibUpdateFindDataFromFileInformation(&LocalFileInfo, FilePath->StartOfString, TRUE);
+        FileInfoToUse = &LocalFileInfo;
+    }
+
     FInfoContext->FilePath = FilePath;
-    FInfoContext->FileInfo = FileInfo;
+    FInfoContext->FileInfo = &LocalFileInfo;
     FInfoContext->FilesFound++;
+    FInfoContext->FilesFoundThisArg++;
 
     YoriLibInitEmptyString(&DisplayString);
     YoriLibExpandCommandVariables(&FInfoContext->FormatString, '$', TRUE, FInfoExpandVariables, FInfoContext, &DisplayString);
@@ -1473,6 +1493,7 @@ ENTRYPOINT(
     DWORD MatchFlags;
     BOOL Recursive = FALSE;
     BOOL BasicEnumeration = FALSE;
+    BOOL ReturnDirectories = FALSE;
     FINFO_CONTEXT FInfoContext;
     YORI_STRING Arg;
 
@@ -1494,6 +1515,9 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("b")) == 0) {
                 BasicEnumeration = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("d")) == 0) {
+                ReturnDirectories = TRUE;
+                ArgumentUnderstood = TRUE;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("f")) == 0) {
                 if (i + 1 < ArgC) {
                     ArgumentUnderstood = TRUE;
@@ -1503,6 +1527,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("s")) == 0) {
                 Recursive = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                ArgumentUnderstood = TRUE;
+                StartArg = i + 1;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -1515,26 +1543,47 @@ ENTRYPOINT(
         }
     }
 
+#if YORI_BUILTIN
+    YoriLibCancelEnable();
+#endif
+
     //
     //  If no file name is specified, use stdin; otherwise open
     //  the file and use that
     //
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("finfo: missing argument\n"));
         return EXIT_FAILURE;
     } else {
-        MatchFlags = YORILIB_FILEENUM_RETURN_FILES | YORILIB_FILEENUM_DIRECTORY_CONTENTS;
+        MatchFlags = YORILIB_FILEENUM_RETURN_FILES;
+
+        if (ReturnDirectories) {
+            MatchFlags |= YORILIB_FILEENUM_RETURN_DIRECTORIES;
+        } else {
+            MatchFlags |= YORILIB_FILEENUM_DIRECTORY_CONTENTS;
+        }
+
         if (Recursive) {
             MatchFlags |= YORILIB_FILEENUM_RECURSE_BEFORE_RETURN | YORILIB_FILEENUM_RECURSE_PRESERVE_WILD;
         }
+
         if (BasicEnumeration) {
             MatchFlags |= YORILIB_FILEENUM_BASIC_EXPANSION;
         }
     
         for (i = StartArg; i < ArgC; i++) {
-    
-            YoriLibForEachFile(&ArgV[i], MatchFlags, 0, FInfoFileFoundCallback, &FInfoContext);
+
+            FInfoContext.FilesFoundThisArg = 0;
+            YoriLibForEachFile(&ArgV[i], MatchFlags, 0, FInfoFileFoundCallback, NULL, &FInfoContext);
+            if (FInfoContext.FilesFoundThisArg == 0) {
+                YORI_STRING FullPath;
+                YoriLibInitEmptyString(&FullPath);
+                if (YoriLibUserStringToSingleFilePath(&ArgV[i], TRUE, &FullPath)) {
+                    FInfoFileFoundCallback(&FullPath, NULL, 0, &FInfoContext);
+                    YoriLibFreeStringContents(&FullPath);
+                }
+            }
         }
     }
 

@@ -258,6 +258,88 @@ YoriLibDecimalStringToInt(
 }
 
 /**
+ This routine attempts to convert a string to a number using a specified
+ number base (ie., decimal or hexadecimal.)  
+
+ @param String Pointer to the string to convert into integer form.
+
+ @param Base The number base.  Must be 10 or 16.
+
+ @param IgnoreSeperators If TRUE, continue to generate a number across comma
+        delimiters.  If FALSE, terminate on a comma.
+
+ @param Number On successful completion, this is updated to contain the
+        resulting number.
+
+ @param CharsConsumed On successful completion, this is updated to indicate
+        the number of characters from the string that were used to generate
+        the number.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriLibStringToNumberSpecifyBase(
+    __in PYORI_STRING String,
+    __in DWORD Base,
+    __in BOOL IgnoreSeperators,
+    __out PLONGLONG Number,
+    __out PDWORD CharsConsumed
+    )
+{
+    LONGLONG Result;
+    DWORD Index;
+    BOOL Negative = FALSE;
+
+    Result = 0;
+    Index = 0;
+
+    while (String->LengthInChars > Index) {
+        if (String->StartOfString[Index] == '-') {
+            if (Negative) {
+                Negative = FALSE;
+            } else {
+                Negative = TRUE;
+            }
+            Index++;
+        } else {
+            break;
+        }
+    }
+
+    for (; String->LengthInChars > Index; Index++) {
+        if (!IgnoreSeperators || String->StartOfString[Index] != ',') {
+            if (Base == 10) {
+                if (String->StartOfString[Index] < '0' || String->StartOfString[Index] > '9') {
+                    break;
+                }
+                Result *= Base;
+                Result += String->StartOfString[Index] - '0';
+            } else if (Base == 16) {
+                TCHAR Char;
+                Char = YoriLibUpcaseChar(String->StartOfString[Index]);
+                if (Char >= '0' && Char <= '9') {
+                    Result *= Base;
+                    Result += Char - '0';
+                } else if (Char >= 'A' && Char <= 'F') {
+                    Result *= Base;
+                    Result += Char - 'A' + 10;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    if (Negative) {
+        Result = 0 - Result;
+    }
+
+    *CharsConsumed = Index;
+    *Number = Result;
+    return TRUE;
+}
+
+/**
  This routine attempts to convert a string to a number using all available
  parsing.  As of this writing, it understands 0x and 0n prefixes as well
  as negative numbers.
@@ -469,6 +551,25 @@ YoriLibTrimSpaces(
 
     while (String->LengthInChars > 0) {
         if (String->StartOfString[String->LengthInChars - 1] == ' ') {
+            String->LengthInChars--;
+        } else {
+            break;
+        }
+    }
+}
+
+/**
+ Remove NULL terminated from the end of a Yori string.
+
+ @param String Pointer to the Yori string to remove NULLs from.
+ */
+VOID
+YoriLibTrimNullTerminators(
+    __in PYORI_STRING String
+    )
+{
+    while (String->LengthInChars > 0) {
+        if (String->StartOfString[String->LengthInChars - 1] == '\0') {
             String->LengthInChars--;
         } else {
             break;
@@ -1108,6 +1209,70 @@ YoriLibStringToHexBuffer(
             return FALSE;
         }
     }
+    return TRUE;
+}
+
+/**
+ Parse a buffer containing binary data and generate a string that encodes the
+ data into hex (implying two chars per byte.)
+
+ @param Buffer Pointer to a buffer to parse.
+
+ @param BufferSize Specifies the length of Buffer, in bytes.
+
+ @param String Pointer to the string to populate.
+
+ @return TRUE to indicate parse success, FALSE to indicate failure.
+ */
+BOOL
+YoriLibHexBufferToString(
+    __in PUCHAR Buffer,
+    __in DWORD BufferSize,
+    __in PYORI_STRING String
+    )
+{
+    UCHAR SourceChar;
+    UCHAR SourceNibble;
+    DWORD Offset;
+    DWORD StrIndex;
+
+    //
+    //  Currently this routine assumes the caller allocated a large enough
+    //  buffer.  The buffer should hold two chars per byte plus a NULL.
+    //
+
+    if (String->LengthAllocated <= BufferSize * sizeof(TCHAR)) {
+        return FALSE;
+    }
+
+    //
+    //  Loop through the buffer
+    //
+
+    StrIndex = 0;
+    for (Offset = 0; Offset < BufferSize; Offset++) {
+
+        SourceChar = Buffer[Offset];
+        SourceNibble = (UCHAR)(SourceChar >> 4);
+        if (SourceNibble >= 10) {
+            String->StartOfString[StrIndex] = (UCHAR)('a' + SourceNibble - 10);
+        } else {
+            String->StartOfString[StrIndex] = (UCHAR)('0' + SourceNibble);
+        }
+
+        StrIndex++;
+        SourceNibble = (UCHAR)(SourceChar & 0xF);
+        if (SourceNibble >= 10) {
+            String->StartOfString[StrIndex] = (UCHAR)('a' + SourceNibble - 10);
+        } else {
+            String->StartOfString[StrIndex] = (UCHAR)('0' + SourceNibble);
+        }
+
+        StrIndex++;
+    }
+
+    String->StartOfString[StrIndex] = '\0';
+    String->LengthInChars = StrIndex;
     return TRUE;
 }
 

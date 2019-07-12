@@ -47,7 +47,7 @@ YENTRY=ymainCRTStartup
 CFLAGS=$(CFLAGS) -Gy -Zi -Od -DDBG=1
 LDFLAGS=$(LDFLAGS) -DEBUG
 !ELSE
-CFLAGS=$(CFLAGS) -Gy -O1syi
+CFLAGS=$(CFLAGS) -Gy -O1sib1
 !ENDIF
 
 !IF $(PDB)==1
@@ -246,13 +246,14 @@ link: $(BINARIES) $(MODULES) compile
 .rc.obj:
 	@echo $(**F)
 	@if exist $@ erase $@
-	@$(RC) /fo$(@B).res $(RCLAGS) $** >NUL
+	@$(RC) /fo$(@B).res $(RCFLAGS) $** >NUL
 	@if not exist $@ ren $(@B).res $@
 
 clean:
 	-@erase if.com >NUL 2>NUL
 	@if exist *.exe erase *.exe
 	@if exist *.com erase *.com
+	@if exist *.dll erase *.dll
 	@if exist *.obj erase *.obj
 	@if exist *.pdb erase *.pdb
 	@if exist *.lib erase *.lib
@@ -263,10 +264,12 @@ clean:
 
 install:
 	@if not exist $(BINDIR) $(MKDIR) $(BINDIR) >NUL
+	@if not exist $(BINDIR)\YoriInit.d $(MKDIR) $(BINDIR)\YoriInit.d >NUL
 	@if not exist $(MODDIR) $(MKDIR) $(MODDIR) >NUL
 	@if not exist $(SYMDIR) $(MKDIR) $(SYMDIR) >NUL
 	@if not "$(BINARIES)."=="." for %%i in ($(BINARIES)) do @copy %%i $(BINDIR) >NUL
 	@if not "$(BINARIES)."=="." for %%i in ($(BINARIES)) do @if exist %%~dpni.pdb copy %%~dpni.pdb $(SYMDIR) >NUL
 	@if not "$(MODULES)."=="." for %%i in ($(MODULES)) do @copy %%i $(MODDIR) >NUL
 	@if not "$(MODULES)."=="." for %%i in ($(MODULES)) do @if exist %%~dpni.pdb copy %%~dpni.pdb $(SYMDIR) >NUL
+	@if not "$(INITFILES)."=="." for %%i in ($(INITFILES)) do @copy %%i $(BINDIR)\YoriInit.d >NUL
 !ENDIF

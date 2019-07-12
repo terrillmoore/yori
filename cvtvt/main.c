@@ -40,6 +40,7 @@ CHAR strCvtvtHelpText[] =
         "   -exec binary   Run process and pipe its output into cvtvt\n"
         "   -html4         Generate output with FONT tags (no backgrounds)\n"
         "   -html5         Generate output with CSS\n"
+        "   -rtf           Generate output as RTF\n"
         "   -text          Generate output as plain text\n"
         "   -win32         Convert to native Win32\n"
         "\n"
@@ -52,7 +53,7 @@ CHAR strCvtvtHelpText[] =
 BOOL
 CvtvtUsage()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Cvtvt %i.%i\n"), CVTVT_VER_MAJOR, CVTVT_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Cvtvt %i.%02i\n"), CVTVT_VER_MAJOR, CVTVT_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -171,6 +172,10 @@ ENTRYPOINT(
                 ArgParsed = TRUE;
                 StripEscapes = FALSE;
                 CvtvtHtml5SetFunctions(&Callbacks);
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("rtf")) == 0) {
+                ArgParsed = TRUE;
+                StripEscapes = FALSE;
+                CvtvtRtfSetFunctions(&Callbacks);
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("text")) == 0) {
                 ArgParsed = TRUE;
                 StripEscapes = TRUE;
@@ -199,19 +204,18 @@ ENTRYPOINT(
     //
 
     if (StartArg == 0) {
-        DWORD FileType = GetFileType(GetStdHandle(STD_INPUT_HANDLE));
-        FileType = FileType & ~(FILE_TYPE_REMOTE);
-        if (FileType == FILE_TYPE_CHAR) {
+        if (YoriLibIsStdInConsole()) {
             DisplayUsage = TRUE;
         }
+        UserFileName = NULL;
+    } else {
+        UserFileName = &ArgV[StartArg];
     }
 
     if (DisplayUsage) {
         CvtvtUsage();
         return EXIT_FAILURE;
     }
-
-    UserFileName = &ArgV[StartArg];
 
     //
     //  If we have a file name, read it; otherwise read from stdin
@@ -298,7 +302,7 @@ ENTRYPOINT(
                                NULL,
                                &StartupInfo,
                                &ProcessInfo)) {
-                YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("Could not launch process %s, error %i\n"), FileName.StartOfString, (int)GetLastError());
+                YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("cvtvt: could not launch process %s, error %i\n"), FileName.StartOfString, (int)GetLastError());
                 YoriLibFreeStringContents(&FileName);
                 YoriLibFreeStringContents(&CmdLine);
                 return EXIT_FAILURE;
@@ -321,7 +325,7 @@ ENTRYPOINT(
 
         hSource = CreateFile(FileName.StartOfString, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,NULL);
         if (hSource == INVALID_HANDLE_VALUE) {
-            YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("Could not open file, error %i\n"), (int)GetLastError());
+            YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("cvtvt: could not open file, error %i\n"), (int)GetLastError());
             return EXIT_FAILURE;
         }
     } else {

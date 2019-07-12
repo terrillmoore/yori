@@ -3,7 +3,7 @@
  *
  * Master header for Yori package routines
  *
- * Copyright (c) 2018 Malcolm J. Smith
+ * Copyright (c) 2018-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,50 +24,6 @@
  * THE SOFTWARE.
  */
 
-/**
- The maximum length of a value in an INI file.  The APIs aren't very good
- about telling us how much space we need, so this is the size we allocate
- and the effective limit.
- */
-#define YORIPKG_MAX_FIELD_LENGTH (256)
-
-/**
- The maximum length of a section in an INI file.  The APIs aren't very good
- about telling us how much space we need, so this is the size we allocate
- and the effective limit.
- */
-#define YORIPKG_MAX_SECTION_LENGTH (64 * 1024)
-
-BOOL
-YoriPkgGetApplicationDirectory(
-    __out PYORI_STRING AppDirectory
-    );
-
-BOOL
-YoriPkgGetPackageIniFile(
-    __in_opt PYORI_STRING InstallDirectory,
-    __out PYORI_STRING IniFileName
-    );
-
-BOOL
-YoriPkgGetPackageInfo(
-    __in PYORI_STRING IniPath,
-    __out PYORI_STRING PackageName,
-    __out PYORI_STRING PackageVersion,
-    __out PYORI_STRING PackageArch,
-    __out PYORI_STRING UpgradePath,
-    __out PYORI_STRING SourcePath,
-    __out PYORI_STRING SymbolPath
-    );
-
-BOOL
-YoriPkgPackagePathToLocalPath(
-    __in PYORI_STRING PackagePath,
-    __in PYORI_STRING IniFilePath,
-    __out PYORI_STRING LocalPath,
-    __out PBOOL DeleteWhenFinished
-    );
-
 BOOL
 YoriPkgCreateBinaryPackage(
     __in PYORI_STRING FileName,
@@ -75,6 +31,8 @@ YoriPkgCreateBinaryPackage(
     __in PYORI_STRING Version,
     __in PYORI_STRING Architecture,
     __in PYORI_STRING FileListFile,
+    __in_opt PYORI_STRING MinimumOSBuild,
+    __in_opt PYORI_STRING PackagePathForOlderBuilds,
     __in_opt PYORI_STRING UpgradePath,
     __in_opt PYORI_STRING SourcePath,
     __in_opt PYORI_STRING SymbolPath,
@@ -98,7 +56,7 @@ YoriPkgDeletePackage(
     );
 
 BOOL
-YoriPkgInstallPackage(
+YoriPkgInstallSinglePackage(
     __in PYORI_STRING PackagePath,
     __in_opt PYORI_STRING TargetDirectory
     );
@@ -135,7 +93,36 @@ YoriPkgInstallSymbolForSinglePackage(
 BOOL
 YoriPkgDisplayAvailableRemotePackages();
 
-DWORD
+BOOL
+YoriPkgDisplaySources();
+
+BOOL
+YoriPkgAddNewSource(
+    __in PYORI_STRING SourcePath,
+    __in BOOLEAN InstallAsFirst
+    );
+
+BOOL
+YoriPkgDeleteSource(
+    __in PYORI_STRING SourcePath
+    );
+
+BOOL
+YoriPkgDisplayMirrors();
+
+BOOL
+YoriPkgAddNewMirror(
+    __in PYORI_STRING SourceName,
+    __in PYORI_STRING TargetName,
+    __in BOOLEAN InstallAsFirst
+    );
+
+BOOL
+YoriPkgDeleteMirror(
+    __in PYORI_STRING SourceName
+    );
+
+BOOL
 YoriPkgInstallRemotePackages(
     __in PYORI_STRING PackageNames,
     __in DWORD PackageNameCount,
@@ -153,4 +140,8 @@ YoriPkgGetRemotePackageUrls(
     );
 
 BOOL
-YoriPkgListInstalledPackages();
+YoriPkgListInstalledPackages(
+    __in BOOL Verbose
+    );
+
+// vim:sw=4:ts=4:et:

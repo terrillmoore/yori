@@ -3,7 +3,7 @@
  *
  * Yori shell function declaration header file
  *
- * Copyright (c) 2017-2018 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -59,9 +59,19 @@ YoriShExpandAliasFromString(
 VOID
 YoriShClearAllAliases();
 
+/**
+ Include user defined aliases in the output of YoriShGetAliasStrings .
+ */
+#define YORI_SH_GET_ALIAS_STRINGS_INCLUDE_USER     (0x00000001)
+
+/**
+ Include system defined aliases in the output of YoriShGetAliasStrings .
+ */
+#define YORI_SH_GET_ALIAS_STRINGS_INCLUDE_INTERNAL (0x00000002)
+
 BOOL
 YoriShGetAliasStrings(
-    __in BOOL IncludeInternal,
+    __in DWORD IncludeFlags,
     __inout PYORI_STRING AliasStrings
     );
 
@@ -241,7 +251,8 @@ DWORD
 YoriShGetEnvironmentVariableWithoutSubstitution(
     __in LPCTSTR Name,
     __out_opt LPTSTR Variable,
-    __in DWORD Size
+    __in DWORD Size,
+    __out_opt PDWORD Generation
     );
 
 BOOL
@@ -249,13 +260,15 @@ YoriShGetEnvironmentVariable(
     __in LPCTSTR Name,
     __out_opt LPTSTR Variable,
     __in DWORD Size,
-    __out PDWORD ReturnedSize
+    __out PDWORD ReturnedSize,
+    __out_opt PDWORD Generation
     );
 
 BOOL
 YoriShAllocateAndGetEnvironmentVariable(
     __in LPCTSTR Name,
-    __out PYORI_STRING Value
+    __out PYORI_STRING Value,
+    __out_opt PDWORD Generation
     );
 
 BOOL
@@ -264,8 +277,20 @@ YoriShExpandEnvironmentVariables(
     __out PYORI_STRING ResultingExpression
     );
 
-// *** EXEC.C ***
 BOOL
+YoriShSetEnvironmentVariable(
+    __in PYORI_STRING VariableName,
+    __in_opt PYORI_STRING Value
+    );
+
+BOOL
+YoriShSetEnvironmentStrings(
+    __in PYORI_STRING NewEnv
+    );
+
+// *** EXEC.C ***
+
+DWORD
 YoriShInitializeRedirection(
     __in PYORI_SH_SINGLE_EXEC_CONTEXT ExecContext,
     __in BOOL PrepareForBuiltIn,
@@ -461,13 +486,19 @@ YoriShFreeCmdContext(
     );
 
 VOID
-YoriShFreeExecContext(
+YoriShFreeExecPlan(
+    __in PYORI_SH_EXEC_PLAN ExecPlan
+    );
+
+VOID
+YoriShReferenceExecContext(
     __in PYORI_SH_SINGLE_EXEC_CONTEXT ExecContext
     );
 
 VOID
-YoriShFreeExecPlan(
-    __in PYORI_SH_EXEC_PLAN ExecPlan
+YoriShDereferenceExecContext(
+    __in PYORI_SH_SINGLE_EXEC_CONTEXT ExecContext,
+    __in BOOLEAN Deallocate
     );
 
 BOOL
@@ -550,9 +581,9 @@ YoriShSetWindowState(
     __in DWORD State
     );
 
-// *** YORISTD.C / YORINONE.C ***
+// *** YORIFULL.C / YORISTD.C / YORINONE.C ***
 
-DWORD
-YoriShDefaultAliasEntriesCount();
+BOOL
+YoriShRegisterDefaultAliases();
 
 // vim:sw=4:ts=4:et:

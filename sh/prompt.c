@@ -3,7 +3,7 @@
  *
  * Yori shell prompt display
  *
- * Copyright (c) 2017 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -157,6 +157,14 @@ YoriShExpandPrompt(
         if (OutputString->LengthAllocated > CharsNeeded) {
             OutputString->StartOfString[0] = '$';
         }
+    } else if (YoriLibCompareStringWithLiteralInsensitive(VariableName, _T("+")) == 0) {
+        CharsNeeded = YoriShGlobal.PromptRecursionDepth;
+        if (OutputString->LengthAllocated > YoriShGlobal.PromptRecursionDepth) {
+            DWORD Index;
+            for (Index = 0; Index < YoriShGlobal.PromptRecursionDepth; Index++) {
+                OutputString->StartOfString[Index] = '+';
+            }
+        }
     }
 
     return CharsNeeded;
@@ -176,69 +184,86 @@ YoriShDisplayPrompt()
     YORI_STRING PromptAfterEnvExpansion;
     YORI_STRING DisplayString;
     PYORI_STRING StringToUse;
-    DWORD SavedErrorLevel = g_ErrorLevel;
+    DWORD SavedErrorLevel = YoriShGlobal.ErrorLevel;
 
-    EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORIPROMPT"), NULL, 0);
-    if (EnvVarLength > 0) {
-        if (YoriLibAllocateString(&PromptVar, EnvVarLength)) {
+    //
+    //  Don't update taskbar UI while executing processes executed as part of
+    //  the prompt or title
+    //
 
-            YoriLibInitEmptyString(&PromptAfterBackquoteExpansion);
-            YoriLibInitEmptyString(&PromptAfterEnvExpansion);
-            YoriLibInitEmptyString(&DisplayString);
+    YoriShGlobal.SuppressTaskUi = TRUE;
 
-            //
-            //  Get the raw prompt expression.
-            //
+    if (YoriShGlobal.PromptGeneration != YoriShGlobal.EnvironmentGeneration) {
+        EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORIPROMPT"), NULL, 0, NULL);
+        if (EnvVarLength > 0) {
+            if (YoriLibAllocateString(&PromptVar, EnvVarLength)) {
 
-            PromptVar.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORIPROMPT"), PromptVar.StartOfString, PromptVar.LengthAllocated);
-            StringToUse = &PromptVar;
-
-            //
-            //  If there are any backquotes, expand them.  If not, or if
-            //  expansion fails, we'll end up pointing at the previous string.
-            //
-
-            if (YoriShExpandBackquotes(&PromptVar, &PromptAfterBackquoteExpansion)) {
-                StringToUse = &PromptAfterBackquoteExpansion;
+                YoriLibFreeStringContents(&YoriShGlobal.PromptVariable);
+                memcpy(&YoriShGlobal.PromptVariable, &PromptVar, sizeof(YORI_STRING));
+                YoriShGlobal.PromptVariable.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORIPROMPT"), YoriShGlobal.PromptVariable.StartOfString, YoriShGlobal.PromptVariable.LengthAllocated, &YoriShGlobal.PromptGeneration);
             }
-
-            //
-            //  If there are any environment variables, expand them.  If not,
-            //  or if expansion fails, we'll end up pointing at the previous
-            //  string.
-            //
-
-            if (YoriShExpandEnvironmentVariables(StringToUse, &PromptAfterEnvExpansion)) {
-                StringToUse = &PromptAfterEnvExpansion;
-            }
-
-            //
-            //  Expand any prompt command variables.
-            //
-
-            YoriLibExpandCommandVariables(StringToUse, '$', FALSE, YoriShExpandPrompt, NULL, &DisplayString);
-
-            //
-            //  Display the result.
-            //
-
-            if (DisplayString.StartOfString != NULL) {
-                YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%y"), &DisplayString);
-                YoriLibFreeStringContents(&DisplayString);
-            }
-
-            //
-            //  If any step involved generating a new string, free those now.
-            //
-
-            if (PromptAfterEnvExpansion.StartOfString != PromptAfterBackquoteExpansion.StartOfString) {
-                YoriLibFreeStringContents(&PromptAfterEnvExpansion);
-            }
-            if (PromptAfterBackquoteExpansion.StartOfString != PromptVar.StartOfString) {
-                YoriLibFreeStringContents(&PromptAfterBackquoteExpansion);
-            }
-            YoriLibFreeStringContents(&PromptVar);
+        } else {
+            YoriLibFreeStringContents(&YoriShGlobal.PromptVariable);
         }
+    }
+
+    if (YoriShGlobal.PromptVariable.LengthInChars > 0) {
+
+        YoriLibInitEmptyString(&PromptAfterBackquoteExpansion);
+        YoriLibInitEmptyString(&PromptAfterEnvExpansion);
+        YoriLibInitEmptyString(&DisplayString);
+
+        //
+        //  Get the raw prompt expression.
+        //
+
+        StringToUse = &YoriShGlobal.PromptVariable;
+
+        //
+        //  If there are any backquotes, expand them.  If not, or if
+        //  expansion fails, we'll end up pointing at the previous string.
+        //
+
+        if (YoriShExpandBackquotes(StringToUse, &PromptAfterBackquoteExpansion)) {
+            StringToUse = &PromptAfterBackquoteExpansion;
+        }
+
+        //
+        //  If there are any environment variables, expand them.  If not,
+        //  or if expansion fails, we'll end up pointing at the previous
+        //  string.
+        //
+
+        if (YoriShExpandEnvironmentVariables(StringToUse, &PromptAfterEnvExpansion)) {
+            StringToUse = &PromptAfterEnvExpansion;
+        }
+
+        //
+        //  Expand any prompt command variables.
+        //
+
+        YoriLibExpandCommandVariables(StringToUse, '$', FALSE, YoriShExpandPrompt, NULL, &DisplayString);
+
+        //
+        //  Display the result.
+        //
+
+        if (DisplayString.StartOfString != NULL) {
+            YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%y"), &DisplayString);
+            YoriLibFreeStringContents(&DisplayString);
+        }
+
+        //
+        //  If any step involved generating a new string, free those now.
+        //
+
+        if (PromptAfterEnvExpansion.StartOfString != PromptAfterBackquoteExpansion.StartOfString) {
+            YoriLibFreeStringContents(&PromptAfterEnvExpansion);
+        }
+        if (PromptAfterBackquoteExpansion.StartOfString != YoriShGlobal.PromptVariable.StartOfString) {
+            YoriLibFreeStringContents(&PromptAfterBackquoteExpansion);
+        }
+
     } else {
 
         LPTSTR PromptString;
@@ -266,75 +291,86 @@ YoriShDisplayPrompt()
     //  If we have a dynamic title, do that too.
     //
 
-    EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORITITLE"), NULL, 0);
-    if (EnvVarLength > 0) {
-        if (YoriLibAllocateString(&PromptVar, EnvVarLength)) {
+    if (YoriShGlobal.TitleGeneration != YoriShGlobal.EnvironmentGeneration) {
+        EnvVarLength = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORITITLE"), NULL, 0, NULL);
+        if (EnvVarLength > 0) {
+            if (YoriLibAllocateString(&PromptVar, EnvVarLength)) {
 
-            YoriLibInitEmptyString(&PromptAfterBackquoteExpansion);
-            YoriLibInitEmptyString(&PromptAfterEnvExpansion);
-            YoriLibInitEmptyString(&DisplayString);
-
-            //
-            //  Get the raw title expression.
-            //
-
-            PromptVar.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORITITLE"), PromptVar.StartOfString, PromptVar.LengthAllocated);
-            StringToUse = &PromptVar;
-
-            //
-            //  If there are any backquotes, expand them.  If not, or if
-            //  expansion fails, we'll end up pointing at the previous string.
-            //
-
-            if (YoriShExpandBackquotes(&PromptVar, &PromptAfterBackquoteExpansion)) {
-                StringToUse = &PromptAfterBackquoteExpansion;
+                YoriLibFreeStringContents(&YoriShGlobal.TitleVariable);
+                memcpy(&YoriShGlobal.TitleVariable, &PromptVar, sizeof(YORI_STRING));
+                YoriShGlobal.TitleVariable.LengthInChars = YoriShGetEnvironmentVariableWithoutSubstitution(_T("YORITITLE"), YoriShGlobal.TitleVariable.StartOfString, YoriShGlobal.TitleVariable.LengthAllocated, &YoriShGlobal.TitleGeneration);
             }
-
-            //
-            //  If there are any environment variables, expand them.  If not,
-            //  or if expansion fails, we'll end up pointing at the previous
-            //  string.
-            //
-
-            if (YoriShExpandEnvironmentVariables(StringToUse, &PromptAfterEnvExpansion)) {
-                StringToUse = &PromptAfterEnvExpansion;
-            }
-
-            //
-            //  Expand any prompt command variables.
-            //
-
-            YoriLibExpandCommandVariables(StringToUse, '$', FALSE, YoriShExpandPrompt, NULL, &DisplayString);
-
-            //
-            //  Display the result.
-            //
-
-            if (DisplayString.StartOfString != NULL) {
-                SetConsoleTitle(DisplayString.StartOfString);
-                YoriLibFreeStringContents(&DisplayString);
-            }
-
-            //
-            //  If any step involved generating a new string, free those now.
-            //
-
-            if (PromptAfterEnvExpansion.StartOfString != PromptAfterBackquoteExpansion.StartOfString) {
-                YoriLibFreeStringContents(&PromptAfterEnvExpansion);
-            }
-            if (PromptAfterBackquoteExpansion.StartOfString != PromptVar.StartOfString) {
-                YoriLibFreeStringContents(&PromptAfterBackquoteExpansion);
-            }
-            YoriLibFreeStringContents(&PromptVar);
+        } else {
+            YoriLibFreeStringContents(&YoriShGlobal.TitleVariable);
         }
     }
+
+    if (YoriShGlobal.TitleVariable.LengthInChars > 0) {
+
+        YoriLibInitEmptyString(&PromptAfterBackquoteExpansion);
+        YoriLibInitEmptyString(&PromptAfterEnvExpansion);
+        YoriLibInitEmptyString(&DisplayString);
+
+        //
+        //  Get the raw title expression.
+        //
+
+        StringToUse = &YoriShGlobal.TitleVariable;
+
+        //
+        //  If there are any backquotes, expand them.  If not, or if
+        //  expansion fails, we'll end up pointing at the previous string.
+        //
+
+        if (YoriShExpandBackquotes(StringToUse, &PromptAfterBackquoteExpansion)) {
+            StringToUse = &PromptAfterBackquoteExpansion;
+        }
+
+        //
+        //  If there are any environment variables, expand them.  If not,
+        //  or if expansion fails, we'll end up pointing at the previous
+        //  string.
+        //
+
+        if (YoriShExpandEnvironmentVariables(StringToUse, &PromptAfterEnvExpansion)) {
+            StringToUse = &PromptAfterEnvExpansion;
+        }
+
+        //
+        //  Expand any prompt command variables.
+        //
+
+        YoriLibExpandCommandVariables(StringToUse, '$', FALSE, YoriShExpandPrompt, NULL, &DisplayString);
+
+        //
+        //  Display the result.
+        //
+
+        if (DisplayString.StartOfString != NULL) {
+            SetConsoleTitle(DisplayString.StartOfString);
+            YoriLibFreeStringContents(&DisplayString);
+        }
+
+        //
+        //  If any step involved generating a new string, free those now.
+        //
+
+        if (PromptAfterEnvExpansion.StartOfString != PromptAfterBackquoteExpansion.StartOfString) {
+            YoriLibFreeStringContents(&PromptAfterEnvExpansion);
+        }
+        if (PromptAfterBackquoteExpansion.StartOfString != YoriShGlobal.TitleVariable.StartOfString) {
+            YoriLibFreeStringContents(&PromptAfterBackquoteExpansion);
+        }
+    }
+
+    YoriShGlobal.SuppressTaskUi = FALSE;
 
     //
     //  Restore the error level since the prompt or title may execute
     //  commands which alter it.
     //
 
-    g_ErrorLevel = SavedErrorLevel;
+    YoriShGlobal.ErrorLevel = SavedErrorLevel;
 
     return TRUE;
 }

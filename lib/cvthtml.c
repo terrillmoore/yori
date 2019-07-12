@@ -49,21 +49,28 @@ BOOLEAN YoriLibHtmlTagOpen = FALSE;
 BOOLEAN YoriLibHtmlUnderlineOn = FALSE;
 
 /**
- On systems that support it, populated with font information from the console
- so the output display can match the input.
+ While parsing, TRUE if bold is in effect.
  */
-YORI_CONSOLE_FONT_INFOEX YoriLibHtmlFontInfo = {0};
+BOOLEAN YoriLibHtmlBoldOn = FALSE;
 
 /**
  Attempt to capture the current console font.  This is only available on
  newer systems.
 
+ @param FontInfo On successful completion, populated with information about
+        the font in use by the console.
+
  @return TRUE to indicate success, FALSE to indicate failure.
  */
 BOOL
-YoriLibCaptureConsoleFont()
+YoriLibCaptureConsoleFont(
+    __out PYORI_CONSOLE_FONT_INFOEX FontInfo
+    )
 {
     HANDLE hConsole;
+
+    ZeroMemory(FontInfo, sizeof(YORI_CONSOLE_FONT_INFOEX));
+
     if (DllKernel32.pGetCurrentConsoleFontEx == NULL) {
         return FALSE;
     }
@@ -80,15 +87,88 @@ YoriLibCaptureConsoleFont()
         return FALSE;
     }
 
-    YoriLibHtmlFontInfo.cbSize = sizeof(YoriLibHtmlFontInfo);
+    FontInfo->cbSize = sizeof(YORI_CONSOLE_FONT_INFOEX);
 
-    if (!DllKernel32.pGetCurrentConsoleFontEx(hConsole, FALSE, &YoriLibHtmlFontInfo)) {
+    if (!DllKernel32.pGetCurrentConsoleFontEx(hConsole, FALSE, FontInfo)) {
         CloseHandle(hConsole);
         return FALSE;
     }
 
     CloseHandle(hConsole);
     return TRUE;
+}
+
+/**
+ The default color table to use.  This is used on pre-Vista systems which
+ don't let console programs query the color table that the console is using.
+ */
+DWORD YoriLibDefaultColorTable[] = {0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0xc0c0c0,
+                                    0x808080, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff, 0x00ffff, 0xffffff};
+
+/**
+ Return a referenced allocation to the color table.  This might be the
+ console's color table or it might be a copy of the default table.
+
+ @param ColorTable On successful completion, updated to point to a color
+        table.  This should be freed with @ref YoriLibDereference.
+
+ @param CurrentAttributes Optionally points to a location to receive the
+        currently active color.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriLibCaptureConsoleColorTable(
+    __out PDWORD * ColorTable,
+    __out_opt PWORD CurrentAttributes
+    )
+{
+    YORI_CONSOLE_SCREEN_BUFFER_INFOEX ScreenInfoEx;
+    HANDLE hConsole;
+    PDWORD TableToReturn;
+
+    if (DllKernel32.pGetConsoleScreenBufferInfoEx) {
+        hConsole = CreateFile(_T("CONOUT$"),
+                              GENERIC_READ | GENERIC_WRITE,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              NULL,
+                              OPEN_EXISTING,
+                              0,
+                              NULL);
+    
+        if (hConsole == INVALID_HANDLE_VALUE) {
+            return FALSE;
+        }
+
+        ScreenInfoEx.cbSize = sizeof(ScreenInfoEx);
+
+        if (DllKernel32.pGetConsoleScreenBufferInfoEx(hConsole, &ScreenInfoEx)) {
+            TableToReturn = YoriLibReferencedMalloc(sizeof(DWORD) * 16);
+            if (TableToReturn != NULL) {
+                memcpy(TableToReturn, ScreenInfoEx.ColorTable, 16 * sizeof(DWORD));
+                CloseHandle(hConsole);
+                *ColorTable = TableToReturn;
+                if (CurrentAttributes != NULL) {
+                    *CurrentAttributes = ScreenInfoEx.wAttributes;
+                }
+                return TRUE;
+            }
+        }
+
+        CloseHandle(hConsole);
+    }
+
+    TableToReturn = YoriLibReferencedMalloc(sizeof(DWORD) * 16);
+    if (TableToReturn != NULL) {
+        memcpy(TableToReturn, YoriLibDefaultColorTable, sizeof(DWORD) * 16);
+        *ColorTable = TableToReturn;
+        if (CurrentAttributes != NULL) {
+            *CurrentAttributes = CVTVT_DEFAULT_COLOR;
+        }
+        return TRUE;
+    }
+
+    return FALSE;
 }
 
 /**
@@ -99,24 +179,24 @@ CONST TCHAR YoriLibHtmlHeader[] = _T("<HTML><HEAD><TITLE>cvtvt output</TITLE></H
 /**
  Output to include at the beginning of any version 4 HTML body.
  */
-CONST TCHAR YoriLibVer4Header[] = _T("<BODY>")
+CONST TCHAR YoriLibHtmlVer4Header[] = _T("<BODY>")
                                 _T("<DIV STYLE=\"background-color: #000000; font-family: ");
 
 /**
  Output to include at the beginning of any version 5 HTML body.
  */
-CONST TCHAR YoriLibVer5Header[] = _T("<BODY><DIV STYLE=\"background-color: #000000; color: #c0c0c0; border-style: ridge; border-width: 4px; display: inline-block; font-family: ");
+CONST TCHAR YoriLibHtmlVer5Header[] = _T("<BODY><DIV STYLE=\"background-color: #000000; color: #c0c0c0; border-style: ridge; border-width: 4px; display: inline-block; font-family: ");
 
 /**
  The end of the HTML body section, after font information has been populated.
  This is used for version 4 and 5.
  */
-CONST TCHAR YoriLibVerHeaderEnd[] = _T(";\">");
+CONST TCHAR YoriLibHtmlVerHeaderEnd[] = _T(";\">");
 
 /**
  Final text to output at the end of any HTML stream.
  */
-CONST TCHAR YoriLibFooter[] = _T("</DIV></BODY></HTML>");
+CONST TCHAR YoriLibHtmlFooter[] = _T("</DIV></BODY></HTML>");
 
 /**
  Generate a string of text for the current console font and state to commence
@@ -132,41 +212,48 @@ YoriLibHtmlGenerateInitialString(
     __inout PYORI_STRING TextString
     )
 {
+    YORI_CONSOLE_FONT_INFOEX FontInfo;
     TCHAR szFontNames[LF_FACESIZE + 100];
     TCHAR szFontWeight[100];
     TCHAR szFontSize[100];
 
-    YoriLibCaptureConsoleFont();
+    YoriLibCaptureConsoleFont(&FontInfo);
 
-    if (YoriLibHtmlFontInfo.FaceName[0] != '\0') {
-        YoriLibSPrintf(szFontNames, _T("'%ls', monospace"), YoriLibHtmlFontInfo.FaceName);
+    if (FontInfo.FaceName[0] != '\0') {
+        YoriLibSPrintf(szFontNames, _T("'%ls', monospace"), FontInfo.FaceName);
     } else {
         YoriLibSPrintf(szFontNames, _T("monospace"));
     }
 
-    if (YoriLibHtmlFontInfo.FontWeight == 0) {
-        YoriLibHtmlFontInfo.FontWeight = 700;
+    if (FontInfo.FontWeight == 0) {
+        FontInfo.FontWeight = 700;
     }
-    if (YoriLibHtmlFontInfo.dwFontSize.Y == 0) {
-        YoriLibHtmlFontInfo.dwFontSize.Y = 12;
+    if (FontInfo.dwFontSize.Y == 0) {
+        FontInfo.dwFontSize.Y = 12;
     }
 
-    YoriLibSPrintf(szFontSize, _T("; font-size: %ipx"), YoriLibHtmlFontInfo.dwFontSize.Y);
+    YoriLibSPrintf(szFontSize, _T("; font-size: %ipx"), FontInfo.dwFontSize.Y);
     if (YoriLibHtmlVersion == 4) {
         szFontWeight[0] = '\0';
     } else {
-        YoriLibSPrintf(szFontWeight, _T("; font-weight: %i"), YoriLibHtmlFontInfo.FontWeight);
+        YoriLibSPrintf(szFontWeight, _T("; font-weight: %i"), FontInfo.FontWeight);
+    }
+
+    if (FontInfo.FontWeight >= 600) {
+        YoriLibHtmlBoldOn = TRUE;
+    } else {
+        YoriLibHtmlBoldOn = FALSE;
     }
 
     YoriLibYPrintf(TextString,
                    _T("%s%s%s%s%s%s%s"),
                    YoriLibHtmlHeader,
-                   (YoriLibHtmlVersion == 4)?YoriLibVer4Header:YoriLibVer5Header,
+                   (YoriLibHtmlVersion == 4)?YoriLibHtmlVer4Header:YoriLibHtmlVer5Header,
                    szFontNames,
                    (YoriLibHtmlVersion == 5)?szFontWeight:_T(""),
                    szFontSize,
-                   YoriLibVerHeaderEnd,
-                   (YoriLibHtmlVersion == 4 && YoriLibHtmlFontInfo.FontWeight >= 600)?_T("<B>"):_T(""));
+                   YoriLibHtmlVerHeaderEnd,
+                   (YoriLibHtmlVersion == 4 && YoriLibHtmlBoldOn)?_T("<B>"):_T(""));
 
     if (TextString->StartOfString == NULL) {
         return FALSE;
@@ -193,8 +280,8 @@ YoriLibHtmlGenerateEndString(
                    _T("%s%s%s%s"),
                    (YoriLibHtmlTagOpen?(YoriLibHtmlUnderlineOn?_T("</U>"):_T("")):_T("")),
                    (YoriLibHtmlTagOpen?(YoriLibHtmlVersion == 4?_T("</FONT>"):_T("</SPAN>")):_T("")),
-                   (YoriLibHtmlVersion == 4 && YoriLibHtmlFontInfo.FontWeight >= 600)?_T("</B>"):_T(""),
-                   YoriLibFooter);
+                   (YoriLibHtmlVersion == 4 && YoriLibHtmlBoldOn)?_T("</B>"):_T(""),
+                   YoriLibHtmlFooter);
 
     if (TextString->StartOfString == NULL) {
         return FALSE;
@@ -324,6 +411,9 @@ YoriLibHtmlGenerateTextString(
  @param BufferSizeNeeded On successful completion, indicates the number of
         characters needed in the TextString buffer to complete the operation.
 
+ @param ColorTable Pointer to a color table describing how to convert the 16
+        colors into RGB.  If NULL, a default mapping is used.
+
  @param StringBuffer Pointer to the string containing a VT100 escape to
         convert to HTML.
 
@@ -332,9 +422,10 @@ YoriLibHtmlGenerateTextString(
  @return TRUE to indicate success, FALSE to indicate failure.
  */
 BOOL
-YoriLibHtmlGenerateEscapeString(
+YoriLibHtmlGenerateEscapeStringInternal(
     __inout PYORI_STRING TextString,
     __out PDWORD BufferSizeNeeded,
+    __in_opt PDWORD ColorTable,
     __in LPTSTR StringBuffer,
     __in DWORD BufferLength
     )
@@ -363,8 +454,11 @@ YoriLibHtmlGenerateEscapeString(
         DWORD code;
         TCHAR NewTag[128];
         BOOLEAN NewUnderline = FALSE;
-        DWORD ColorTable[] = {0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0xc0c0c0,
-                              0x808080, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff, 0x00ffff, 0xffffff};
+        PDWORD ColorTableToUse;
+        ColorTableToUse = ColorTable;
+        if (ColorTableToUse == NULL) {
+            ColorTableToUse = YoriLibDefaultColorTable;
+        }
 
         SrcPoint++;
         RemainingLength--;
@@ -452,18 +546,31 @@ YoriLibHtmlGenerateEscapeString(
         }
 
         //
+        //  Convert the color to a Windows color so that it maps into the
+        //  Windows colortable
+        //
+
+        NewColor = YoriLibAnsiToWindowsByte(NewColor);
+
+        //
         //  Output the appropriate tag depending on the version the user wanted
         //
 
         if (YoriLibHtmlVersion == 4) {
             SrcOffset = YoriLibSPrintf(NewTag,
-                                       _T("<FONT COLOR=#%06x>"),
-                                       (int)ColorTable[NewColor & 0xf]);
+                                       _T("<FONT COLOR=#%02x%02x%02x>"),
+                                       GetRValue(ColorTableToUse[NewColor & 0xf]),
+                                       GetGValue(ColorTableToUse[NewColor & 0xf]),
+                                       GetBValue(ColorTableToUse[NewColor & 0xf]));
         } else {
             SrcOffset = YoriLibSPrintf(NewTag,
-                                       _T("<SPAN STYLE=\"color:#%06x;background-color:#%06x\">"),
-                                      (int)ColorTable[NewColor & 0xf],
-                                      (int)ColorTable[(NewColor & 0xf0) >> 4]);
+                                       _T("<SPAN STYLE=\"color:#%02x%02x%02x;background-color:#%02x%02x%02x\">"),
+                                       GetRValue(ColorTableToUse[NewColor & 0xf]),
+                                       GetGValue(ColorTableToUse[NewColor & 0xf]),
+                                       GetBValue(ColorTableToUse[NewColor & 0xf]),
+                                       GetRValue(ColorTableToUse[(NewColor & 0xf0) >> 4]),
+                                       GetGValue(ColorTableToUse[(NewColor & 0xf0) >> 4]),
+                                       GetBValue(ColorTableToUse[(NewColor & 0xf0) >> 4]));
         }
 
         if (DestOffset + SrcOffset < TextString->LengthAllocated) {
@@ -492,6 +599,35 @@ YoriLibHtmlGenerateEscapeString(
     *BufferSizeNeeded = DestOffset + 1;
 
     return TRUE;
+}
+
+/**
+ Generate a string of text that descibes a VT100 escape action in terms of
+ HTML.
+
+ @param TextString On successful completion, updated to contain the escaped
+        HTML text.  If this buffer is not large enough, the routine succeeds
+        and returns the required size in BufferSizeNeeded.
+
+ @param BufferSizeNeeded On successful completion, indicates the number of
+        characters needed in the TextString buffer to complete the operation.
+
+ @param StringBuffer Pointer to the string containing a VT100 escape to
+        convert to HTML.
+
+ @param BufferLength Specifies the number of characters in StringBuffer.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriLibHtmlGenerateEscapeString(
+    __inout PYORI_STRING TextString,
+    __out PDWORD BufferSizeNeeded,
+    __in LPTSTR StringBuffer,
+    __in DWORD BufferLength
+    )
+{
+    return YoriLibHtmlGenerateEscapeStringInternal(TextString, BufferSizeNeeded, NULL, StringBuffer, BufferLength);
 }
 
 /**
@@ -524,6 +660,12 @@ typedef struct _YORI_LIB_HTML_CONVERT_CONTEXT {
      reallocated.
      */
     PYORI_STRING HtmlText;
+
+    /**
+     Pointer to a color table describing how to convert the 16 colors into
+     RGB.  If NULL, a default mapping is used.
+     */
+    PDWORD ColorTable;
 } YORI_LIB_HTML_CONVERT_CONTEXT, *PYORI_LIB_HTML_CONVERT_CONTEXT;
 
 /**
@@ -693,7 +835,7 @@ YoriLibHtmlCnvProcessAndOutputEscape(
 
     YoriLibInitEmptyString(&TextString);
     BufferSizeNeeded = 0;
-    if (!YoriLibHtmlGenerateEscapeString(&TextString, &BufferSizeNeeded, StringBuffer, BufferLength)) {
+    if (!YoriLibHtmlGenerateEscapeStringInternal(&TextString, &BufferSizeNeeded, Context->ColorTable, StringBuffer, BufferLength)) {
         return FALSE;
     }
 
@@ -702,7 +844,7 @@ YoriLibHtmlCnvProcessAndOutputEscape(
     }
 
     BufferSizeNeeded = 0;
-    if (!YoriLibHtmlGenerateEscapeString(&TextString, &BufferSizeNeeded, StringBuffer, BufferLength)) {
+    if (!YoriLibHtmlGenerateEscapeStringInternal(&TextString, &BufferSizeNeeded, Context->ColorTable, StringBuffer, BufferLength)) {
         YoriLibFreeStringContents(&TextString);
         return FALSE;
     }
@@ -726,6 +868,10 @@ YoriLibHtmlCnvProcessAndOutputEscape(
  @param HtmlText On successful completion, updated to point to an HTML
         representation.  This string will be reallocated within this routine.
 
+ @param ColorTable Pointer to a color table describing how to convert the 16
+        colors into RGB.  If NULL, the current console mapping is used if
+        available, and if not available, a default mapping is used.
+
  @param HtmlVersion Specifies the format of HTML to use.
 
  @return TRUE to indicate success, FALSE to indicate failure.
@@ -734,15 +880,25 @@ BOOL
 YoriLibHtmlConvertToHtmlFromVt(
     __in PYORI_STRING VtText,
     __inout PYORI_STRING HtmlText,
+    __in_opt PDWORD ColorTable,
     __in DWORD HtmlVersion
     )
 {
     YORI_LIB_VT_CALLBACK_FUNCTIONS CallbackFunctions;
     YORI_LIB_HTML_CONVERT_CONTEXT Context;
+    BOOL FreeColorTable = FALSE;
 
     YoriLibHtmlSetVersion(HtmlVersion);
 
     Context.HtmlText = HtmlText;
+    Context.ColorTable = ColorTable;
+    if (ColorTable == NULL) {
+        if (YoriLibCaptureConsoleColorTable(&Context.ColorTable, NULL)) {
+            FreeColorTable = TRUE;
+        } else {
+            Context.ColorTable = YoriLibDefaultColorTable;
+        }
+    }
 
     CallbackFunctions.InitializeStream = YoriLibHtmlCnvInitializeStream;
     CallbackFunctions.EndStream = YoriLibHtmlCnvEndStream;
@@ -750,6 +906,9 @@ YoriLibHtmlConvertToHtmlFromVt(
     CallbackFunctions.ProcessAndOutputEscape = YoriLibHtmlCnvProcessAndOutputEscape;
 
     if (!YoriLibHtmlCnvInitializeStream((HANDLE)&Context)) {
+        if (FreeColorTable) {
+            YoriLibDereference(Context.ColorTable);
+        }
         return FALSE;
     }
 
@@ -758,11 +917,21 @@ YoriLibHtmlConvertToHtmlFromVt(
                                              (HANDLE)&Context,
                                              &CallbackFunctions)) {
 
+        if (FreeColorTable) {
+            YoriLibDereference(Context.ColorTable);
+        }
+
         return FALSE;
     }
 
     if (!YoriLibHtmlCnvEndStream((HANDLE)&Context)) {
+        if (FreeColorTable) {
+            YoriLibDereference(Context.ColorTable);
+        }
         return FALSE;
+    }
+    if (FreeColorTable) {
+        YoriLibDereference(Context.ColorTable);
     }
 
     return TRUE;

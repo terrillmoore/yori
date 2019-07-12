@@ -79,6 +79,10 @@ PSDIR_OPTS Opts;
  */
 PSDIR_SUMMARY Summary;
 
+/**
+ Global data for the application.
+ */
+SDIR_GLOBAL SdirGlobal;
 
 BOOL
 SdirDisplayCollection();
@@ -137,53 +141,6 @@ SdirCaptureFoundItemIntoDirent (
 }
 
 /**
- Generate information typically returned from a directory enumeration by
- opening the file and querying information from it.  This is used for named
- streams which do not go through a regular file enumeration.
-
- @param FindData On successful completion, populated with information 
-        typically returned by the system when enumerating files.
-
- @param FullPath Pointer to a NULL terminate string referring to the full
-        path to the file.
-
- @return TRUE to indicate success, FALSE to indicate failure.
- */
-BOOL
-SdirUpdateFindDataFromFileInformation (
-    __out PWIN32_FIND_DATA FindData,
-    __in LPTSTR FullPath
-    )
-{
-    HANDLE hFile;
-    BY_HANDLE_FILE_INFORMATION FileInfo;
-
-    hFile = CreateFile(FullPath,
-                       FILE_READ_ATTRIBUTES,
-                       FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
-                       NULL,
-                       OPEN_EXISTING,
-                       FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT|FILE_FLAG_OPEN_NO_RECALL,
-                       NULL);
-
-    if (hFile != INVALID_HANDLE_VALUE) {
-
-        GetFileInformationByHandle(hFile, &FileInfo);
-
-        FindData->dwFileAttributes = FileInfo.dwFileAttributes;
-        FindData->ftCreationTime = FileInfo.ftCreationTime;
-        FindData->ftLastAccessTime = FileInfo.ftLastAccessTime;
-        FindData->ftLastWriteTime = FileInfo.ftLastWriteTime;
-        FindData->nFileSizeHigh = FileInfo.nFileSizeHigh;
-        FindData->nFileSizeLow  = FileInfo.nFileSizeLow;
-
-        CloseHandle(hFile);
-        return TRUE;
-    }
-    return FALSE;
-}
-
-/**
  Capture enough state about a file from its path to determine the color
  to display it with.  This is used when displaying directory names as part
  of recursive enumerations where the directories aren't rendered as part of
@@ -219,7 +176,7 @@ SdirRenderAttributesFromPath (
 
         memset(&FindData, 0, sizeof(FindData));
         DummyString.LengthInChars = YoriLibSPrintfS(DummyString.StartOfString, DummyString.LengthAllocated, _T("%s\\"), FullPath);
-        SdirUpdateFindDataFromFileInformation(&FindData, DummyString.StartOfString);
+        YoriLibUpdateFindDataFromFileInformation(&FindData, DummyString.StartOfString, FALSE);
         SdirCaptureFoundItemIntoDirent(&CurrentEntry, &FindData, &DummyString);
         YoriLibFreeStringContents(&DummyString);
         return CurrentEntry.RenderAttributes;
@@ -259,8 +216,7 @@ SdirAddToCollection (
 
     SdirCaptureFoundItemIntoDirent(CurrentEntry, FindData, FullPath);
 
-    if (Opts->BriefRecurseDepth == 0 &&
-        CurrentEntry->RenderAttributes.Ctrl & SDIR_ATTRCTRL_HIDE) {
+    if (CurrentEntry->RenderAttributes.Ctrl & YORILIB_ATTRCTRL_HIDE) {
 
         SdirDirCollectionCurrent--;
         return TRUE;
@@ -277,9 +233,10 @@ SdirAddToCollection (
     }
 
     //
-    //  Now that our internal entry is fully poulated, insert it into the correct sorted position.
-    //  As an optimization, check if we just need to insert at the end (for file name sort on
-    //  NTFS, this is the common case.)
+    //  Now that our internal entry is fully poulated, insert it into the
+    //  correct sorted position.  As an optimization, check if we just need
+    //  to insert at the end (for file name sort on NTFS, this is the
+    //  common case.)
     //
 
     if (SdirDirCollectionCurrent > 1 &&
@@ -290,8 +247,10 @@ SdirAddToCollection (
     }
 
     //
-    //  MSFIX This algorithm seems really stupid.  Since we know the sort
-    //  list is sorted, shouldn't we binary search?
+    //  Currently sorting is done very inefficiently by a selection sort
+    //  type algorithm.  Generally this doesn't run due to the optimization
+    //  above.  When a different sort order is requested, performance could
+    //  be improved by using a better algorithm here.
     //
 
     for (i = 0; i < SdirDirCollectionCurrent - 1; i++) {
@@ -328,7 +287,63 @@ typedef struct _SDIR_ITEM_FOUND_CONTEXT {
      request.
      */
     DWORD ItemsFound;
+
+    /**
+     A Win32 error code, initialized to success and populated with an error
+     if any enumeration operation fails.  This is done to reduce reliance
+     on Win32 GetLastError, because it allows us to plumb an enumerate
+     error back to the calling function without promising not to make
+     Win32 calls in the meantime.
+     */
+    DWORD Error;
+
+    /**
+     An allocation for enumerating streams within files.  This is generally
+     never used unless stream enumeration is requested.  The caller should
+     always be prepared to free it.
+     */
+    YORI_STRING StreamFullPath;
+
+
 } SDIR_ITEM_FOUND_CONTEXT, *PSDIR_ITEM_FOUND_CONTEXT;
+
+/**
+ A callback invoked by @ref SdirEnumeratePathWithDepth when an enumerate
+ error occurs.
+
+ @param FullPath Pointer to a full, escaped path to the file.
+
+ @param ErrorCode Specifies the error that was encountered.
+
+ @param Depth Specifies the recursion depth.  This should be zero and is
+        ignored.
+
+ @param Context Pointer to a an SDIR_ITEM_FOUND_CONTEXT block for all objects
+        found via a single enumerate request.
+ 
+ @return TRUE to indicate enumeration should continue, FALSE to indicate it
+         should terminate.
+ */
+BOOL
+SdirEnumerateErrorCallback(
+    __in PYORI_STRING FullPath,
+    __in DWORD ErrorCode,
+    __in DWORD Depth,
+    __in PVOID Context
+    )
+{
+    PSDIR_ITEM_FOUND_CONTEXT ItemContext = (PSDIR_ITEM_FOUND_CONTEXT)Context;
+
+    UNREFERENCED_PARAMETER(FullPath);
+    UNREFERENCED_PARAMETER(Depth);
+
+    if (ItemContext->Error == ERROR_SUCCESS) {
+        ItemContext->Error = ErrorCode;
+    }
+
+    return TRUE;
+}
+
 
 /**
  A callback invoked by @ref SdirEnumeratePathWithDepth for every file found.
@@ -364,7 +379,6 @@ SdirItemFoundCallback(
         HANDLE hStreamFind;
         WIN32_FIND_STREAM_DATA FindStreamData;
         WIN32_FIND_DATA BogusFindData;
-        YORI_STRING StreamFullPath;
 
         //
         //  Display the default stream
@@ -379,9 +393,18 @@ SdirItemFoundCallback(
         hStreamFind = DllKernel32.pFindFirstStreamW(FullPath->StartOfString, 0, &FindStreamData, 0);
         if (hStreamFind != INVALID_HANDLE_VALUE) {
 
-            if (!YoriLibAllocateString(&StreamFullPath, FullPath->LengthInChars + YORI_LIB_MAX_STREAM_NAME)) {
-                FindClose(hStreamFind);
-                return FALSE;
+            //
+            //  If the existing buffer isn't large enough, allocate a new
+            //  one.  Add in an extra 100 chars in the hope that this new
+            //  buffer can be reused for a later file.
+            //
+
+            if (ItemContext->StreamFullPath.LengthAllocated < FullPath->LengthInChars + YORI_LIB_MAX_STREAM_NAME) {
+                YoriLibFreeStringContents(&ItemContext->StreamFullPath);
+                if (!YoriLibAllocateString(&ItemContext->StreamFullPath, FullPath->LengthInChars + YORI_LIB_MAX_STREAM_NAME + 100)) {
+                    FindClose(hStreamFind);
+                    return FALSE;
+                }
             }
 
             do {
@@ -400,7 +423,7 @@ SdirItemFoundCallback(
                         FindStreamData.cStreamName[StreamLength - 6] = '\0';
                     }
 
-                    StreamFullPath.LengthInChars = YoriLibSPrintfS(StreamFullPath.StartOfString, StreamFullPath.LengthAllocated, _T("%s%s%s"), Opts->ParentName.StartOfString, FindData->cFileName, FindStreamData.cStreamName);
+                    ItemContext->StreamFullPath.LengthInChars = YoriLibSPrintfS(ItemContext->StreamFullPath.StartOfString, ItemContext->StreamFullPath.LengthAllocated, _T("%s%s%s"), Opts->ParentName.StartOfString, FindData->cFileName, FindStreamData.cStreamName);
 
                     //
                     //  Assume file state is stream state
@@ -418,16 +441,10 @@ SdirItemFoundCallback(
                     //  Populate stream information
                     //
 
-                    SdirUpdateFindDataFromFileInformation(&BogusFindData, StreamFullPath.StartOfString);
-                    SdirAddToCollection(&BogusFindData, &StreamFullPath);
+                    YoriLibUpdateFindDataFromFileInformation(&BogusFindData, ItemContext->StreamFullPath.StartOfString, FALSE);
+                    SdirAddToCollection(&BogusFindData, &ItemContext->StreamFullPath);
                 }
             } while (DllKernel32.pFindNextStreamW(hStreamFind, &FindStreamData));
-
-            //
-            //  MSFIX Keep this on the context so we can reuse it
-            //
-
-            YoriLibFreeStringContents(&StreamFullPath);
         }
 
         FindClose(hStreamFind);
@@ -440,6 +457,66 @@ SdirItemFoundCallback(
 #endif
     ItemContext->ItemsFound++;
     return TRUE;
+}
+
+/**
+ Copy entries from one old sorted array allocation to a new allocation.
+ When this occurs the pointer values in the old array need to be adjusted
+ from the old allocation to the new allocation.  In addition, entries may
+ have been inserted into the old collection which should not be preserved
+ because they will be reenumerated.  When this occurs they will be in the
+ sorted array in sorted order, so any entry beyond the end of the
+ collection array should not be propagated to the new sort array.
+
+ @param OldCollection Pointer to the previous array of directory entries.
+
+ @param NewCollection Pointer to the new array of directory entries.  This,
+        combined with OldCollection, implies the offset adjustment to apply
+        to any entry within the sorted array.
+
+ @param NumberEntriesToCopy Specifies the maximum number of entries that
+        should be copied into the new sorted array.  This is the number of
+        entries within the collection that are being preserved; newer entries
+        will be enumerated again in a subsequent operation.
+
+ @param OldSorted Pointer to the previous array of sorted entries.  Entries
+        within this array will be filtered against NumberEntriesToCopy,
+        adjusted based on pointer offset, and propagated to the new array.
+
+ @param NewSorted Pointer to the new array of sorted entries.  This will be
+        populated within this routine.
+
+ @param NumberSortedEntries The number of elements in the OldSorted array.
+ */
+VOID
+SdirMoveSortedEntries(
+    __in PYORI_FILE_INFO OldCollection,
+    __in PYORI_FILE_INFO NewCollection,
+    __in DWORD NumberEntriesToCopy,
+    __in PYORI_FILE_INFO* OldSorted,
+    __out PYORI_FILE_INFO* NewSorted,
+    __in DWORD NumberSortedEntries
+    )
+{
+    DWORD SrcIndex;
+    DWORD DestIndex;
+    PYORI_FILE_INFO ThisEntry;
+
+    UNREFERENCED_PARAMETER(NumberSortedEntries);
+
+    DestIndex = 0;
+    for (SrcIndex = 0; SrcIndex < NumberSortedEntries; SrcIndex++) {
+        ThisEntry = (PYORI_FILE_INFO)OldSorted[SrcIndex];
+        ASSERT(ThisEntry >= OldCollection);
+        if (ThisEntry < &OldCollection[NumberEntriesToCopy]) {
+            NewSorted[DestIndex] = (PYORI_FILE_INFO)((PUCHAR)ThisEntry -
+                                                     (PUCHAR)OldCollection +
+                                                     (PUCHAR)NewCollection);
+            DestIndex++;
+        }
+    }
+
+    ASSERT(DestIndex == NumberEntriesToCopy);
 }
 
 
@@ -460,8 +537,8 @@ SdirEnumeratePathWithDepth (
     )
 {
     LPTSTR FinalPart;
-    DWORD SizeCopied;
     ULONG DirEntsToPreserve;
+    SDIR_SUMMARY SummaryToPreserve;
     PYORI_FILE_INFO NewSdirDirCollection;
     PYORI_FILE_INFO * NewSdirDirSorted;
     SDIR_ITEM_FOUND_CONTEXT ItemFoundContext;
@@ -553,6 +630,7 @@ SdirEnumeratePathWithDepth (
     //
 
     DirEntsToPreserve = SdirDirCollectionCurrent;
+    memcpy(&SummaryToPreserve, Summary, sizeof(SummaryToPreserve));
 
     do {
 
@@ -563,9 +641,10 @@ SdirEnumeratePathWithDepth (
         //
 
         if (SdirDirCollectionCurrent >= SdirAllocatedDirents || SdirDirCollection == NULL) {
+            DWORD PreviousAllocatedDirents = SdirAllocatedDirents;
 
-            if (SdirDirCollectionCurrent > SdirAllocatedDirents) {
-                SdirAllocatedDirents = SdirDirCollectionCurrent;
+            if (SdirDirCollectionCurrent >= SdirAllocatedDirents) {
+                SdirAllocatedDirents = SdirDirCollectionCurrent + 1;
             }
             if (SdirAllocatedDirents < UINT_MAX - 100) {
                 SdirAllocatedDirents += 100;
@@ -587,24 +666,15 @@ SdirEnumeratePathWithDepth (
             }
 
             //
-            // Copy back any previous data.  This occurs when multiple criteria are specified, eg.,
-            // "*.a *.b".  Apply fixups to everything in the sorted array which were based on the
-            // previous collection and now need to be based on the new one.
-            //
-            // MSFIX I don't think this is right.  Fixing up offsets is fine, but if we already
-            // inserted things from the second criteria before failing out, the sorted array
-            // is being updated to point to items that we haven't populated into the new array.
-            // This is rare because we need to have multiple criteria, succeed with one, try
-            // for the second, then fail out and reallocate.
+            //  Copy back any previous data.  This occurs when multiple
+            //  criteria are specified, eg., "*.a *.b".  Apply fixups to
+            //  everything in the sorted array which were based on the
+            //  previous collection and now need to be based on the new one.
             //
     
             if (DirEntsToPreserve > 0) {
                 memcpy(NewSdirDirCollection, SdirDirCollection, sizeof(YORI_FILE_INFO)*DirEntsToPreserve);
-                for (SizeCopied = 0; SizeCopied < DirEntsToPreserve; SizeCopied++) {
-                    NewSdirDirSorted[SizeCopied] = (PYORI_FILE_INFO)((PUCHAR)SdirDirSorted[SizeCopied] -
-                                                                  (PUCHAR)SdirDirCollection +
-                                                                  (PUCHAR)NewSdirDirCollection);
-                }
+                SdirMoveSortedEntries(SdirDirCollection, NewSdirDirCollection, DirEntsToPreserve, SdirDirSorted, NewSdirDirSorted, PreviousAllocatedDirents);
             }
     
             if (SdirDirCollection != NULL) {
@@ -618,15 +688,12 @@ SdirEnumeratePathWithDepth (
             SdirDirCollection = NewSdirDirCollection;
             SdirDirSorted = NewSdirDirSorted;
             SdirDirCollectionCurrent = DirEntsToPreserve;
+            memcpy(Summary, &SummaryToPreserve, sizeof(SummaryToPreserve));
         }
 
         //
         //  If we can't find enumerate, display the error except when we're recursive
         //  and the error is we found no files in this particular directory.
-        //
-        //  MSFIX YoriLibForEachFile isn't trying to set last error.  This means
-        //  error reports are garbage and we don't know why items weren't found
-        //  (access denied vs. no matches.)
         //
 
         ItemFoundContext.ItemsFound = 0;
@@ -642,23 +709,54 @@ SdirEnumeratePathWithDepth (
         if (Depth > 0) {
             MatchFlags |= YORILIB_FILEENUM_BASIC_EXPANSION;
         }
+
+        YoriLibInitEmptyString(&ItemFoundContext.StreamFullPath);
+        ItemFoundContext.Error = ERROR_SUCCESS;
+
         if (!YoriLibForEachFile(FindStr,
                                 MatchFlags,
                                 0,
                                 SdirItemFoundCallback,
+                                SdirEnumerateErrorCallback,
                                 &ItemFoundContext)) {
 
             if (!Opts->Recursive) {
-                DWORD Err = GetLastError();
-                SdirDisplayYsError(Err, FindStr);
-                SetLastError(Err);
+                if (ItemFoundContext.Error == ERROR_SUCCESS) {
+                    ItemFoundContext.Error = GetLastError();
+                }
+                YoriLibFreeStringContents(&ItemFoundContext.StreamFullPath);
+
+                //
+                //  For file not found errors, continue enumerating through
+                //  all of the criteria specified by the user, and display
+                //  it only if there are no files from any criteria
+                //
+
+                if (ItemFoundContext.Error != ERROR_FILE_NOT_FOUND) {
+                    SdirDisplayYsError(ItemFoundContext.Error, FindStr);
+                    SetLastError(ItemFoundContext.Error);
+                } else {
+                    return TRUE;
+                }
+            } else {
+                YoriLibFreeStringContents(&ItemFoundContext.StreamFullPath);
             }
             return FALSE;
         }
 
+        YoriLibFreeStringContents(&ItemFoundContext.StreamFullPath);
+
         if (ItemFoundContext.ItemsFound == 0) {
             if (!Opts->Recursive) {
-                SdirDisplayYsError(GetLastError(), FindStr);
+                if (ItemFoundContext.Error == ERROR_SUCCESS) {
+                    ItemFoundContext.Error = ERROR_FILE_NOT_FOUND;
+                }
+
+                if (ItemFoundContext.Error != ERROR_FILE_NOT_FOUND) {
+                    SdirDisplayYsError(ItemFoundContext.Error, FindStr);
+                } else {
+                    return TRUE;
+                }
             }
             SetLastError(ERROR_FILE_NOT_FOUND);
             return FALSE;
@@ -741,7 +839,7 @@ SdirNewlineThroughDisplay()
     SDIR_FMTCHAR Line;
 
     Line.Char = '\n';
-    YoriLibSetColorToWin32(&Line.Attr, 0);
+    YoriLibSetColorToWin32(&Line.Attr, (UCHAR)YoriLibVtGetDefaultColor());
 
     SdirWrite(&Line, 1);
     return TRUE;
@@ -1188,229 +1286,6 @@ SdirEnumerateAndDisplay (
 }
 
 /**
- Count of the number of lines displayed in brief recurse mode to allow
- for alternating colors in order to make lines more readable.
- */
-ULONG HeirarchyLineNumber = 0;
-
-/**
- Display a single line of output during brief recurse (du style) enumerates.
-
- @param NodeName Pointer to a NULL terminated string indicating the directory
-        that was just enumerated.
-
- @param Before Pointer to summary information indicating the number of files
-        found and their sizes before this directory enumerate.
-
- @param After Pointer to summary information indicating the number of files
-        found and their sizes after this directory enumerate.
-
- @param DefaultAttributes Specifies the default color information to apply for
-        text.  This is overridden by much of the display elements.
-
- @return TRUE to indicate success, FALSE to indicate failure.
- */
-BOOL
-SdirDisplayHeirarchySummary(
-    __in PYORI_STRING NodeName,
-    __in PSDIR_SUMMARY Before,
-    __in PSDIR_SUMMARY After,
-    __in YORILIB_COLOR_ATTRIBUTES DefaultAttributes
-    )
-{
-    PSDIR_FMTCHAR Buffer;
-    TCHAR Str[100];
-    DWORD Len;
-    DWORD NodeNameOffset;
-    DWORD PrefixLen;
-    LARGE_INTEGER Size;
-    ULONG CurrentChar = 0;
-    ULONG MetadataSize = 40;
-    ULONG FileCountAlignSize = 4;
-    ULONG DirectoryNameAlignSize;
-    YORILIB_COLOR_ATTRIBUTES Background;
-    YORILIB_COLOR_ATTRIBUTES RenderAttributes;
-    YORILIB_COLOR_ATTRIBUTES ThisColor;
-
-    //
-    //  If it doesn't meet size criteria, display nothing
-    //
-
-    if (Opts->BriefRecurseSize > 0) {
-        if ((After->TotalSize - Before->TotalSize) < Opts->BriefRecurseSize) {
-            return TRUE;
-        }
-    }
-
-    Len = NodeName->LengthInChars + SDIR_MAX_WIDTH;
-    Buffer = YoriLibMalloc(Len * sizeof(SDIR_FMTCHAR));
-    if (Buffer == NULL) {
-        SdirDisplayError(GetLastError(), _T("YoriLibMalloc"));
-        return FALSE;
-    }
-
-    HeirarchyLineNumber++;
-
-    if ((HeirarchyLineNumber % 2) == 0) {
-        Background = Opts->FtBriefAlternate.HighlightColor;
-    } else {
-        YoriLibSetColorToWin32(&Background, 0);
-    }
-
-    //
-    //  Guess a good amount of padding based on the window size
-    //
-
-    if (Opts->FtCompressedFileSize.Flags & SDIR_FEATURE_DISPLAY) {
-        MetadataSize += 20;
-    }
-
-    if (Opts->ConsoleWidth < 10 + MetadataSize) {
-        DirectoryNameAlignSize = 10;
-    } else {
-        DirectoryNameAlignSize = Opts->ConsoleWidth - MetadataSize;
-    }
-
-    if (DirectoryNameAlignSize > (SDIR_MAX_WIDTH - 100)) {
-        DirectoryNameAlignSize = SDIR_MAX_WIDTH - 100;
-    }
-
-    if (Opts->ConsoleWidth > 70) {
-        FileCountAlignSize++;
-        DirectoryNameAlignSize -= 2;
-    }
-
-    if (Opts->ConsoleWidth > 100) {
-        FileCountAlignSize++;
-        DirectoryNameAlignSize -= 2;
-    }
-
-    if (Opts->ConsoleWidth > 130) {
-        FileCountAlignSize++;
-        DirectoryNameAlignSize -= 2;
-    }
-
-    //
-    //  Display directory name
-    //
-
-    RenderAttributes = SdirRenderAttributesFromPath(NodeName);
-    RenderAttributes = YoriLibCombineColors(RenderAttributes, Background);
-    Len = NodeName->LengthInChars;
-    PrefixLen = 0;
-
-    if (YoriLibIsFullPathUnc(NodeName)) {
-
-        Len -= 8;
-        NodeNameOffset = 8;
-
-        SdirPasteStr(&Buffer[CurrentChar], _T("\\\\"), RenderAttributes, 2);
-        CurrentChar += 2;
-        PrefixLen = 2;
-
-    } else {
-        Len -= 4;
-        NodeNameOffset = 4;
-    }
-    
-    SdirPasteStr(&Buffer[CurrentChar], &NodeName->StartOfString[NodeNameOffset], RenderAttributes, Len);
-    CurrentChar += Len;
-    Len = DirectoryNameAlignSize - ((Len + PrefixLen) % DirectoryNameAlignSize);
-    SdirPasteStrAndPad(&Buffer[CurrentChar], NULL, RenderAttributes, 0, Len);
-    CurrentChar += Len;
-
-    //
-    //  Display size of the directory contents
-    //
-
-    Size.HighPart = 0;
-    SdirFileSizeFromLargeInt(&Size) = After->TotalSize - Before->TotalSize;
-    ThisColor = YoriLibCombineColors(Opts->FtFileSize.HighlightColor, Background);
-    CurrentChar += SdirDisplayGenericSize(&Buffer[CurrentChar], ThisColor, &Size);
-    ThisColor = YoriLibCombineColors(DefaultAttributes, Background);
-    SdirPasteStr(&Buffer[CurrentChar], _T(" used "), ThisColor, 6);
-    CurrentChar += 6;
-
-    //
-    //  Display compressed size if requested
-    //
-
-    if (Opts->FtCompressedFileSize.Flags & SDIR_FEATURE_DISPLAY) {
-        ThisColor = YoriLibCombineColors(DefaultAttributes, Background);
-        SdirPasteStr(&Buffer[CurrentChar], _T("("), ThisColor, 1);
-        CurrentChar += 1;
-
-        Size.HighPart = 0;
-        SdirFileSizeFromLargeInt(&Size) = After->CompressedSize - Before->CompressedSize;
-
-        ThisColor = YoriLibCombineColors(Opts->FtCompressedFileSize.HighlightColor, Background);
-        CurrentChar += SdirDisplayGenericSize(&Buffer[CurrentChar], ThisColor, &Size);
-        ThisColor = YoriLibCombineColors(DefaultAttributes, Background);
-        SdirPasteStr(&Buffer[CurrentChar], _T(" compressed) "), ThisColor, 13);
-        CurrentChar += 13;
-    }
-
-    //
-    //  Display count of files
-    //
-
-    YoriLibSPrintfS(Str, sizeof(Str)/sizeof(Str[0]), _T("%i"), (int)(After->NumFiles - Before->NumFiles));
-    Len = (DWORD)_tcslen(Str);
-
-    ThisColor = YoriLibCombineColors(DefaultAttributes, Background);
-    SdirPasteStrAndPad(&Buffer[CurrentChar], _T("in "), ThisColor, 3, 3+FileCountAlignSize);
-    CurrentChar += (Len>FileCountAlignSize)?3:(3+FileCountAlignSize-Len);
-    ThisColor = YoriLibCombineColors(Opts->FtNumberFiles.HighlightColor, Background);
-    SdirPasteStr(&Buffer[CurrentChar], Str, ThisColor, Len);
-    CurrentChar += Len;
-
-    //
-    //  And count of dirs
-    //
-
-    YoriLibSPrintfS(Str, sizeof(Str)/sizeof(Str[0]), _T("%i"), (int)(After->NumDirs - Before->NumDirs));
-    Len = (DWORD)_tcslen(Str);
-
-    ThisColor = YoriLibCombineColors(DefaultAttributes, Background);
-    SdirPasteStrAndPad(&Buffer[CurrentChar], _T(" files and "), ThisColor, 11, 11+FileCountAlignSize);
-    CurrentChar += (Len>FileCountAlignSize)?11:(11+FileCountAlignSize-Len);
-
-    ThisColor = YoriLibCombineColors(Opts->FtNumberFiles.HighlightColor, Background);
-    SdirPasteStr(&Buffer[CurrentChar], Str, ThisColor, Len);
-    CurrentChar += Len;
-
-    ThisColor = YoriLibCombineColors(DefaultAttributes, Background);
-    SdirPasteStr(&Buffer[CurrentChar], _T(" dirs"), ThisColor, 5);
-    CurrentChar += 5;
-
-    //
-    //  Display the formatted line
-    //
-
-    for (Len = 0; Len < CurrentChar / Opts->ConsoleWidth; Len++) {
-        if (!SdirRowDisplayed()) {
-            YoriLibFree(Buffer);
-            return FALSE;
-        }
-    }
-    SdirWrite(Buffer, CurrentChar);
-
-    //
-    //  Newline is written through this function for automatic pause
-    //  accounting
-    //
-
-    ThisColor = YoriLibCombineColors(DefaultAttributes, Background);
-    if (!SdirWriteStringWithAttribute(_T("\n"), ThisColor)) {
-        YoriLibFree(Buffer);
-        return FALSE;
-    }
-
-    YoriLibFree(Buffer);
-    return TRUE;
-}
-
-/**
  Error codes that should allow enumeration to continue rather than abort.
  */
 #define SdirContinuableError(err) \
@@ -1424,8 +1299,7 @@ SdirDisplayHeirarchySummary(
     (err != ERROR_FILE_NOT_FOUND)
 
 /**
- Perform a recursive enumerate.  This may be a brief enumerate (du-style) or
- may be a regular display of files in each directory.
+ Perform a recursive enumerate.
 
  @param Depth Indicates the current recursion depth.  The user specified
         directory is zero.
@@ -1509,11 +1383,10 @@ SdirEnumerateAndDisplaySubtree (
     }
 
     //
-    //  If we're giving a regular view and have something to display,
-    //  display it.
+    //  If we have something to display, display it.
     //
 
-    if (Opts->BriefRecurseDepth == 0 && SdirDirCollectionCurrent > 0) {
+    if (SdirDirCollectionCurrent > 0) {
 
         YORILIB_COLOR_ATTRIBUTES RenderAttributes;
         RenderAttributes = SdirRenderAttributesFromPath(&ParentDirectory);
@@ -1620,17 +1493,6 @@ SdirEnumerateAndDisplaySubtree (
     YoriLibFreeStringContents(&NextSubDir);
     
     FindClose(hFind);
-
-    //
-    //  If we're displaying a heirarchy, display the results at
-    //  the end, after all children have been accounted for.
-    //
-
-    if (Opts->BriefRecurseDepth != 0 && Depth <= Opts->BriefRecurseDepth) {
-        if (!SdirDisplayHeirarchySummary(&ParentDirectory, &SummaryOnEntry, Summary, Opts->FtSummary.HighlightColor)) {
-            return FALSE;
-        }
-    }
 
     return TRUE;
 }

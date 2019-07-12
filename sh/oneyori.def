@@ -3,10 +3,12 @@ NAME ONEYORI
 EXPORTS
     YoriApiAddAlias
     YoriApiAddHistoryString
+    YoriApiAddSystemAlias
     YoriApiBuiltinRegister
     YoriApiBuiltinUnregister
     YoriApiClearHistoryStrings
     YoriApiDeleteAlias
+    YoriApiDecrementPromptRecursionDepth
     YoriApiExecuteBuiltin
     YoriApiExecuteExpression
     YoriApiExitProcess
@@ -18,9 +20,12 @@ EXPORTS
     YoriApiGetJobInformation
     YoriApiGetJobOutput
     YoriApiGetNextJobId
+    YoriApiGetSystemAliasStrings
     YoriApiGetYoriVersion
+    YoriApiIncrementPromptRecursionDepth
     YoriApiPipeJobOutput
     YoriApiSetDefaultColor
+    YoriApiSetEnvironmentVariable
     YoriApiSetJobPriority
     YoriApiSetUnloadRoutine
     YoriApiTerminateJob

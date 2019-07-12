@@ -47,7 +47,7 @@ CHAR strStartHelpText[] =
 BOOL
 StartHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Start %i.%i\n"), START_VER_MAJOR, START_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Start %i.%02i\n"), START_VER_MAJOR, START_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -166,6 +166,9 @@ ENTRYPOINT(
     DWORD i;
     YORI_STRING Arg;
     INT ShowState;
+    YORI_STRING FoundExecutable;
+    BOOL PrependYori = FALSE;
+    BOOL Result;
 
     ShowState = SW_SHOWNORMAL;
 
@@ -191,6 +194,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("s:m")) == 0) {
                 ShowState = SW_SHOWMINNOACTIVE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                StartArg = i + 1;
+                ArgumentUnderstood = TRUE;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -203,12 +210,76 @@ ENTRYPOINT(
         }
     }
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("start: missing argument\n"));
         return EXIT_FAILURE;
     }
 
-    if (StartShellExecute(ArgC - StartArg, &ArgV[StartArg], ShowState)) {
+    //
+    //  Look for an executable in the path.  Note that since ShellExecute can
+    //  do more than launch executables, there's no guarantee that this will
+    //  find anything, nor any guarantee that what it finds is the same thing
+    //  ShellExecute will run.  But if it does find something that ends in
+    //  .ys1, add in "yori /c" so that ShellExecute knows what to do with it.
+    //
+
+    YoriLibInitEmptyString(&FoundExecutable);
+    if (YoriLibLocateExecutableInPath(&ArgV[StartArg], NULL, NULL, &FoundExecutable) && FoundExecutable.LengthInChars > 0) {
+        LPTSTR Ext;
+        YORI_STRING YsExt;
+
+        YoriLibInitEmptyString(&YsExt);
+        Ext = YoriLibFindRightMostCharacter(&FoundExecutable, '.');
+        if (Ext != NULL) {
+            YsExt.StartOfString = Ext;
+            YsExt.LengthInChars = FoundExecutable.LengthInChars - (DWORD)(Ext - FoundExecutable.StartOfString);
+            if (YoriLibCompareStringWithLiteralInsensitive(&YsExt, _T(".ys1")) == 0) {
+                PrependYori = TRUE;
+            }
+        }
+    }
+    YoriLibFreeStringContents(&FoundExecutable);
+
+    //
+    //  Note that the path resolved name is not what gets sent to
+    //  ShellExecute.  That is only used to detect if an extension is
+    //  present.
+    //
+
+    Result = FALSE;
+    if (PrependYori) {
+        DWORD ArgCount = ArgC - StartArg;
+        DWORD Index;
+        YORI_STRING * ArgArray;
+
+        ArgArray = YoriLibMalloc((ArgCount + 2) * sizeof(YORI_STRING));
+        if (ArgArray == NULL) {
+            return EXIT_FAILURE;
+        }
+
+        YoriLibInitEmptyString(&ArgArray[0]);
+        if (!YoriLibAllocateAndGetEnvironmentVariable(_T("YORISPEC"), &ArgArray[0])) {
+            YoriLibConstantString(&ArgArray[0], _T("Yori"));
+        }
+        YoriLibConstantString(&ArgArray[1], _T("/c"));
+
+        //
+        //  Note this is not updating any references
+        //
+
+        for (Index = 0; Index < ArgCount; Index++) {
+            memcpy(&ArgArray[Index + 2], &ArgV[StartArg + Index], sizeof(YORI_STRING));
+            ArgArray[Index + 2].MemoryToFree = NULL;
+        }
+
+        Result = StartShellExecute(ArgCount + 2, ArgArray, ShowState);
+        YoriLibFreeStringContents(&ArgArray[0]);
+        YoriLibFree(ArgArray);
+    } else {
+        Result = StartShellExecute(ArgC - StartArg, &ArgV[StartArg], ShowState);
+    }
+
+    if (Result) {
         return EXIT_SUCCESS;
     } else {
         return EXIT_FAILURE;

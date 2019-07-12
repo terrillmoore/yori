@@ -4,7 +4,7 @@
  * Yori call from modules into external API.  Functions in this file can only
  * be called from code running within the Yori process.
  *
- * Copyright (c) 2017-2018 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -107,6 +107,49 @@ YoriCallAddHistoryString(
     }
     return pYoriApiAddHistoryString(NewCmd);
 }
+
+/**
+ Prototype for the @ref YoriApiAddSystemAlias function.
+ */
+typedef BOOL YORI_API_ADD_SYSTEM_ALIAS(PYORI_STRING, PYORI_STRING);
+
+/**
+ Prototype for a pointer to the @ref YoriApiAddSystemAlias function.
+ */
+typedef YORI_API_ADD_SYSTEM_ALIAS *PYORI_API_ADD_SYSTEM_ALIAS;
+
+/**
+ Pointer to the @ref YoriApiAddSystemAlias function.
+ */
+PYORI_API_ADD_ALIAS pYoriApiAddSystemAlias;
+
+/**
+ Add a new, or replace an existing, shell alias.
+
+ @param Alias The alias to add or update.
+
+ @param Value The value to assign to the alias.
+
+ @return TRUE if the alias was successfully updated, FALSE if it was not.
+ */
+BOOL
+YoriCallAddSystemAlias(
+    __in PYORI_STRING Alias,
+    __in PYORI_STRING Value
+    )
+{
+    if (pYoriApiAddSystemAlias == NULL) {
+        HMODULE hYori;
+
+        hYori = GetModuleHandle(NULL);
+        pYoriApiAddSystemAlias = (PYORI_API_ADD_SYSTEM_ALIAS)GetProcAddress(hYori, "YoriApiAddSystemAlias");
+        if (pYoriApiAddSystemAlias == NULL) {
+            return FALSE;
+        }
+    }
+    return pYoriApiAddSystemAlias(Alias, Value);
+}
+
 
 
 /**
@@ -228,6 +271,43 @@ YoriCallClearHistoryStrings(
         }
     }
     return pYoriApiClearHistoryStrings();
+}
+
+/**
+ Prototype for the @ref YoriApiDecrementPromptRecursionDepth function.
+ */
+typedef BOOL YORI_API_DECREMENT_PROMPT_RECURSION_DEPTH();
+
+/**
+ Prototype for a pointer to the @ref YoriApiDecrementPromptRecursionDepth function.
+ */
+typedef YORI_API_DECREMENT_PROMPT_RECURSION_DEPTH *PYORI_API_DECREMENT_PROMPT_RECURSION_DEPTH;
+
+/**
+ Pointer to the @ref YoriApiDecrementPromptRecursionDepth function.
+ */
+PYORI_API_DECREMENT_PROMPT_RECURSION_DEPTH pYoriApiDecrementPromptRecursionDepth;
+
+/**
+ Decrements the recursion depth that the prompt should display when the $+$
+ token is used.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriCallDecrementPromptRecursionDepth(
+    )
+{
+    if (pYoriApiDecrementPromptRecursionDepth == NULL) {
+        HMODULE hYori;
+
+        hYori = GetModuleHandle(NULL);
+        pYoriApiDecrementPromptRecursionDepth = (PYORI_API_DECREMENT_PROMPT_RECURSION_DEPTH)GetProcAddress(hYori, "YoriApiDecrementPromptRecursionDepth");
+        if (pYoriApiDecrementPromptRecursionDepth == NULL) {
+            return FALSE;
+        }
+    }
+    return pYoriApiDecrementPromptRecursionDepth();
 }
 
 
@@ -737,6 +817,47 @@ YoriCallGetNextJobId(
 }
 
 /**
+ Prototype for the @ref YoriApiGetSystemAliasStrings function.
+ */
+typedef BOOL YORI_API_GET_SYSTEM_ALIAS_STRINGS(PYORI_STRING);
+
+/**
+ Prototype for a pointer to the @ref YoriApiGetSystemAliasStrings function.
+ */
+typedef YORI_API_GET_SYSTEM_ALIAS_STRINGS *PYORI_API_GET_SYSTEM_ALIAS_STRINGS;
+
+/**
+ Pointer to the @ref YoriApiGetSystemAliasStrings function.
+ */
+PYORI_API_GET_SYSTEM_ALIAS_STRINGS pYoriApiGetSystemAliasStrings;
+
+/**
+ Build the set of system defined aliases into a an array of key value pairs
+ and return a pointer to the result.  This must be freed with a
+ subsequent call to @ref YoriCallFreeYoriString .
+
+ @param AliasStrings On successful completion, populated with alias strings.
+
+ @return TRUE to indicate success, or FALSE to indicate failure.
+ */
+BOOL
+YoriCallGetSystemAliasStrings(
+    __out PYORI_STRING AliasStrings
+    )
+{
+    if (pYoriApiGetSystemAliasStrings == NULL) {
+        HMODULE hYori;
+
+        hYori = GetModuleHandle(NULL);
+        pYoriApiGetSystemAliasStrings = (PYORI_API_GET_SYSTEM_ALIAS_STRINGS)GetProcAddress(hYori, "YoriApiGetSystemAliasStrings");
+        if (pYoriApiGetSystemAliasStrings == NULL) {
+            return FALSE;
+        }
+    }
+    return pYoriApiGetSystemAliasStrings(AliasStrings);
+}
+
+/**
  Prototype for the @ref YoriApiGetYoriVersion function.
  */
 typedef BOOL YORI_API_GET_YORI_VERSION(PDWORD, PDWORD);
@@ -778,6 +899,43 @@ YoriCallGetYoriVersion(
         }
     }
     return pYoriApiGetYoriVersion(MajorVersion, MinorVersion);
+}
+
+/**
+ Prototype for the @ref YoriApiIncrementPromptRecursionDepth function.
+ */
+typedef BOOL YORI_API_INCREMENT_PROMPT_RECURSION_DEPTH();
+
+/**
+ Prototype for a pointer to the @ref YoriApiIncrementPromptRecursionDepth function.
+ */
+typedef YORI_API_INCREMENT_PROMPT_RECURSION_DEPTH *PYORI_API_INCREMENT_PROMPT_RECURSION_DEPTH;
+
+/**
+ Pointer to the @ref YoriApiIncrementPromptRecursionDepth function.
+ */
+PYORI_API_INCREMENT_PROMPT_RECURSION_DEPTH pYoriApiIncrementPromptRecursionDepth;
+
+/**
+ Increments the recursion depth that the prompt should display when the $+$
+ token is used.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriCallIncrementPromptRecursionDepth(
+    )
+{
+    if (pYoriApiIncrementPromptRecursionDepth == NULL) {
+        HMODULE hYori;
+
+        hYori = GetModuleHandle(NULL);
+        pYoriApiIncrementPromptRecursionDepth = (PYORI_API_INCREMENT_PROMPT_RECURSION_DEPTH)GetProcAddress(hYori, "YoriApiIncrementPromptRecursionDepth");
+        if (pYoriApiIncrementPromptRecursionDepth == NULL) {
+            return FALSE;
+        }
+    }
+    return pYoriApiIncrementPromptRecursionDepth();
 }
 
 /**
@@ -867,6 +1025,49 @@ YoriCallSetDefaultColor(
         }
     }
     pYoriApiSetDefaultColor(NewDefaultColor);
+    return TRUE;
+}
+
+/**
+ Prototype for the YoriApiSetEnvironmentVariable function.
+ */
+typedef VOID YORI_API_SET_ENVIRONMENT_VARIABLE(PYORI_STRING, PYORI_STRING);
+
+/**
+ Prototype for a pointer to the YoriApiSetEnvironmentVariable function.
+ */
+typedef YORI_API_SET_ENVIRONMENT_VARIABLE *PYORI_API_SET_ENVIRONMENT_VARIABLE;
+
+/**
+ Pointer to the @ref YoriApiSetEnvironmentVariable function.
+ */
+PYORI_API_SET_ENVIRONMENT_VARIABLE pYoriApiSetEnvironmentVariable;
+
+/**
+ Set an environment variable in the Yori shell process.
+
+ @param VariableName The variable name to set.
+
+ @param Value Pointer to the value to set.  If NULL, the variable is deleted.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriCallSetEnvironmentVariable(
+    __in PYORI_STRING VariableName,
+    __in_opt PYORI_STRING Value
+    )
+{
+    if (pYoriApiSetEnvironmentVariable == NULL) {
+        HMODULE hYori;
+
+        hYori = GetModuleHandle(NULL);
+        pYoriApiSetEnvironmentVariable = (PYORI_API_SET_ENVIRONMENT_VARIABLE)GetProcAddress(hYori, "YoriApiSetEnvironmentVariable");
+        if (pYoriApiSetEnvironmentVariable == NULL) {
+            return FALSE;
+        }
+    }
+    pYoriApiSetEnvironmentVariable(VariableName, Value);
     return TRUE;
 }
 

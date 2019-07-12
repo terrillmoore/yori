@@ -3,7 +3,7 @@
  *
  * Yori shell enumerate and operate on strings or files
  *
- * Copyright (c) 2017-2018 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -37,14 +37,16 @@ const
 CHAR strForHelpText[] =
         "Enumerates through a list of strings or files.\n"
         "\n"
-        "FOR [-license] [-b] [-c] [-d] [-p n] <var> in (<list>) do <cmd>\n"
+        "FOR [-license] [-b] [-c] [-d] [-i <criteria>] [-p n] [-r] <var> in (<list>)\n"
+        "    do <cmd>\n"
         "\n"
         "   -b             Use basic search criteria for files only\n"
         "   -c             Use cmd as a subshell rather than Yori\n"
         "   -d             Match directories rather than files\n"
-        "   -i <criteria>  Only treat match files if they meet criteria, see below"
+        "   -i <criteria>  Only treat match files if they meet criteria, see below\n"
         "   -l             Use (start,step,end) notation for the list\n"
         "   -p <n>         Execute with <n> concurrent processes\n"
+        "   -r             Look for matches in subdirectories under the current directory\n"
         "\n"
         " The -i option will match files only if they meet criteria.  This is a\n"
         " semicolon delimited list of entries matching the following form:\n"
@@ -58,7 +60,7 @@ BOOL
 ForHelp()
 {
 
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("For %i.%i\n"), FOR_VER_MAJOR, FOR_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("For %i.%02i\n"), FOR_VER_MAJOR, FOR_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -281,7 +283,7 @@ ForExecuteCommand(
                 NewArgWritePoint.StartOfString += OldArg.LengthInChars;
                 NewArgWritePoint.LengthAllocated -= OldArg.LengthInChars;
                 NewArgWritePoint.StartOfString[0] = '\0';
-                
+
                 NewArgArray[Count + PrefixArgCount].LengthInChars = (DWORD)(NewArgWritePoint.StartOfString - NewArgArray[Count + PrefixArgCount].StartOfString);
                 ASSERT(NewArgArray[Count + PrefixArgCount].LengthInChars < NewArgArray[Count + PrefixArgCount].LengthAllocated);
                 ASSERT(YoriLibIsStringNullTerminated(&NewArgArray[Count + PrefixArgCount]));
@@ -341,7 +343,7 @@ Cleanup:
 
  @param Depth Recursion depth, ignored in this application.
 
- @param ExecContext The current state of the program and information needed to
+ @param Context The current state of the program and information needed to
         launch new child processes.
 
  @return TRUE to continute enumerating, FALSE to abort.
@@ -351,11 +353,15 @@ ForFileFoundCallback(
     __in PYORI_STRING FilePath,
     __in PWIN32_FIND_DATA FileInfo,
     __in DWORD Depth,
-    __in PFOR_EXEC_CONTEXT ExecContext
+    __in PVOID Context
     )
 {
+    PFOR_EXEC_CONTEXT ExecContext;
+
     UNREFERENCED_PARAMETER(Depth);
     UNREFERENCED_PARAMETER(FileInfo);
+
+    ExecContext = (PFOR_EXEC_CONTEXT)Context;
 
     ASSERT(YoriLibIsStringNullTerminated(FilePath));
 
@@ -432,7 +438,7 @@ ENTRYPOINT(
                 ForHelp();
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("license")) == 0) {
-                YoriLibDisplayMitLicense(_T("2017-2018"));
+                YoriLibDisplayMitLicense(_T("2017-2019"));
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("b")) == 0) {
                 BasicEnumeration = TRUE;
@@ -447,7 +453,7 @@ ENTRYPOINT(
                 if (i + 1 < ArgC) {
                     YORI_STRING ErrorSubstring;
                     YoriLibInitEmptyString(&ErrorSubstring);
-                    
+
                     if (!YoriLibFileFiltParseFilterString(&ExecContext.Filter, &ArgV[i + 1], &ErrorSubstring)) {
                         if (ErrorSubstring.LengthInChars > 0) {
                             YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("for: error parsing filter string '%y' at '%y'\n"), &ArgV[i + 1], &ErrorSubstring);
@@ -477,6 +483,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("r")) == 0) {
                 Recurse = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                ArgumentUnderstood = TRUE;
+                StartArg = i + 1;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -489,7 +499,7 @@ ENTRYPOINT(
         }
     }
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("for: missing argument\n"));
         goto cleanup_and_exit;
     }
@@ -614,7 +624,7 @@ ENTRYPOINT(
             YoriLibFreeStringContents(&Criteria);
             goto cleanup_and_exit;
         }
-        
+
         Criteria.StartOfString += 1;
         Criteria.LengthInChars -= 1;
         YoriLibTrimSpaces(&Criteria);
@@ -639,7 +649,7 @@ ENTRYPOINT(
             YoriLibFreeStringContents(&Criteria);
             goto cleanup_and_exit;
         }
-        
+
         Criteria.StartOfString += 1;
         Criteria.LengthInChars -= 1;
         YoriLibTrimSpaces(&Criteria);
@@ -711,19 +721,23 @@ ENTRYPOINT(
             }
 
             RequiresExpansion = FALSE;
-            for (CharIndex = 0; CharIndex < ThisMatch.LengthInChars; CharIndex++) {
-                if (ThisMatch.StartOfString[CharIndex] == '*' ||
-                    ThisMatch.StartOfString[CharIndex] == '?') {
+            if (Recurse) {
+                RequiresExpansion = TRUE;
+            } else {
+                for (CharIndex = 0; CharIndex < ThisMatch.LengthInChars; CharIndex++) {
+                    if (ThisMatch.StartOfString[CharIndex] == '*' ||
+                        ThisMatch.StartOfString[CharIndex] == '?') {
 
-                    RequiresExpansion = TRUE;
-                    break;
-                }
-                if (!BasicEnumeration) {
-                    if (ThisMatch.StartOfString[CharIndex] == '[' ||
-                        ThisMatch.StartOfString[CharIndex] == '{') {
-    
                         RequiresExpansion = TRUE;
                         break;
+                    }
+                    if (!BasicEnumeration) {
+                        if (ThisMatch.StartOfString[CharIndex] == '[' ||
+                            ThisMatch.StartOfString[CharIndex] == '{') {
+
+                            RequiresExpansion = TRUE;
+                            break;
+                        }
                     }
                 }
             }
@@ -731,7 +745,7 @@ ENTRYPOINT(
             if (ThisMatch.LengthInChars > 0) {
 
                 if (RequiresExpansion) {
-                    YoriLibForEachFile(&ThisMatch, MatchFlags, 0, ForFileFoundCallback, &ExecContext);
+                    YoriLibForEachFile(&ThisMatch, MatchFlags, 0, ForFileFoundCallback, NULL, &ExecContext);
                 } else {
                     ForExecuteCommand(&ThisMatch, &ExecContext);
                 }

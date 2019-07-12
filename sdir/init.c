@@ -145,7 +145,7 @@ SdirAppInitialize()
             Opts->ConsoleHeight = 2;
         }
 
-        YoriLibSetColorToWin32(&Opts->PreviousAttributes, (UCHAR)(ScreenInfo.wAttributes & SDIR_ATTRIBUTE_FULLCOLOR_MASK));
+        YoriLibSetColorToWin32(&Opts->PreviousAttributes, (UCHAR)(ScreenInfo.wAttributes & YORILIB_ATTRIBUTE_FULLCOLOR_MASK));
     }
 
     SdirDefaultColor = YoriLibResolveWindowColorComponents(SdirDefaultColor, Opts->PreviousAttributes, TRUE);
@@ -267,15 +267,6 @@ SdirOptInitialize()
         }
     }
 
-    //
-    //  If we need to count the average link size, we need to know the link
-    //  count too
-    //
-
-    if (Opts->EnableAverageLinkSize) {
-        Opts->FtLinkCount.Flags |= SDIR_FEATURE_COLLECT;
-    }
-
     return TRUE;
 }
 
@@ -297,35 +288,11 @@ SdirParseOpt (
     BOOL OptParsed = FALSE;
     DWORD i, j;
 
-    if (Opt[0] == 'a') {
-        if (Opt[1] == 'l') {
-            if (Opt[2] == 'n') {
-                Opts->EnableAverageLinkSize = FALSE;
-                OptParsed = TRUE;
-            } else if (Opt[2] == '\0') {
-                Opts->EnableAverageLinkSize = TRUE;
-                OptParsed = TRUE;
-            }
-        }
-    } else if (Opt[0] == 'b') {
-        if (Opt[1] == 'r') {
-            Opts->BriefRecurseDepth = SdirStringToNum32(&Opt[2], NULL);
-            if (Opts->BriefRecurseDepth == 0) {
-                Opts->BriefRecurseDepth = UINT_MAX;
-            }
-            OptParsed = TRUE;
-            Opts->Recursive = TRUE;
-        } else if (Opt[1] == 's') {
-            YORI_STRING YsSize;
-            LARGE_INTEGER FileSize;
-            if (Opts->BriefRecurseDepth == 0) {
-                Opts->BriefRecurseDepth = UINT_MAX;
-            }
-            YoriLibConstantString(&YsSize, &Opt[2]);
-            FileSize = YoriLibStringToFileSize(&YsSize);
-            Opts->BriefRecurseSize = SdirFileSizeFromLargeInt(&FileSize);
-            OptParsed = TRUE;
-            Opts->Recursive = TRUE;
+    if (Opt[0] == 'b') {
+        if (Opt[1] == 'r' ||
+            Opt[1] == 's') {
+
+            SdirWriteString(_T("Brief recurse has been removed.  Use du instead.\n"));
         }
     } else if (Opt[0] == 'c') {
         if (Opt[1] == 'w') {
@@ -368,23 +335,19 @@ SdirParseOpt (
         if (Opt[1] == 'c') {
             DWORD Len = (DWORD)_tcslen(&Opt[2]);
             if (Len > 0) {
-                Opts->CustomFileColor = YoriLibMalloc((Len + 1) * sizeof(TCHAR));
-                if (Opts->CustomFileColor == NULL) {
+                if (!YoriLibAllocateString(&Opts->CustomFileColor, Len + 1)) {
                     return FALSE;
                 }
-                YoriLibSPrintfS(Opts->CustomFileColor, Len + 1, _T("%s"), &Opt[2]);
-                Opts->CustomFileColorLength = Len;
+                Opts->CustomFileColor.LengthInChars = YoriLibSPrintfS(Opts->CustomFileColor.StartOfString, Len + 1, _T("%s"), &Opt[2]);
                 OptParsed = TRUE;
             }
         } else if (Opt[1] == 'e') {
             DWORD Len = (DWORD)_tcslen(&Opt[2]);
             if (Len > 0) {
-                Opts->CustomFileFilter = YoriLibMalloc((Len + 1) * sizeof(TCHAR));
-                if (Opts->CustomFileFilter == NULL) {
+                if (!YoriLibAllocateString(&Opts->CustomFileFilter, Len + 1)) {
                     return FALSE;
                 }
-                YoriLibSPrintfS(Opts->CustomFileFilter, Len + 1, _T("%s"), &Opt[2]);
-                Opts->CustomFileFilterLength = Len;
+                Opts->CustomFileFilter.LengthInChars = YoriLibSPrintfS(Opts->CustomFileFilter.StartOfString, Len + 1, _T("%s"), &Opt[2]);
                 OptParsed = TRUE;
             }
         }
@@ -640,6 +603,8 @@ SdirAppCleanup()
 {
     SetConsoleCtrlHandler(SdirCancelHandler, FALSE);
     if (Opts != NULL) {
+        YoriLibFreeStringContents(&Opts->CustomFileFilter);
+        YoriLibFreeStringContents(&Opts->CustomFileColor);
         YoriLibFreeStringContents(&Opts->ParentName);
         YoriLibFree(Opts);
         Opts = NULL;
@@ -650,10 +615,8 @@ SdirAppCleanup()
         Summary = NULL;
     }
 
-    if (SdirAttributeApply != NULL) {
-        YoriLibFree(SdirAttributeApply);
-        SdirAttributeApply = NULL;
-    }
+    YoriLibFileFiltFreeFilter(&SdirGlobal.FileColorCriteria);
+    YoriLibFileFiltFreeFilter(&SdirGlobal.FileHideCriteria);
 
     if (SdirDirCollection != NULL) {
         YoriLibFree(SdirDirCollection);

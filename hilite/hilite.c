@@ -52,7 +52,7 @@ CHAR strHiliteHelpText[] =
 BOOL
 HiliteHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Hilite %i.%i\n"), HILITE_VER_MAJOR, HILITE_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Hilite %i.%02i\n"), HILITE_VER_MAJOR, HILITE_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -111,6 +111,12 @@ typedef struct _HILITE_CONTEXT {
      should be applied case sensitively.
      */
     BOOL Insensitive;
+
+    /**
+     TRUE if file enumeration is being performed recursively; FALSE if it is
+     in one directory only.
+     */
+    BOOL Recursive;
 
     /**
      The color to apply if none of the matches match.
@@ -248,7 +254,7 @@ HiliteProcessStream(
 
  @param Depth Recursion depth, ignored in this application.
 
- @param HiliteContext Pointer to the hilite context structure indicating the
+ @param Context Pointer to the hilite context structure indicating the
         action to perform and populated with the file and line count found.
 
  @return TRUE to continute enumerating, FALSE to abort.
@@ -258,14 +264,15 @@ HiliteFileFoundCallback(
     __in PYORI_STRING FilePath,
     __in PWIN32_FIND_DATA FileInfo,
     __in DWORD Depth,
-    __in PHILITE_CONTEXT HiliteContext
+    __in PVOID Context
     )
 {
     HANDLE FileHandle;
+    PHILITE_CONTEXT HiliteContext = (PHILITE_CONTEXT)Context;
 
     UNREFERENCED_PARAMETER(Depth);
 
-    ASSERT(FilePath->StartOfString[FilePath->LengthInChars] == '\0');
+    ASSERT(YoriLibIsStringNullTerminated(FilePath));
 
     if ((FileInfo->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
         FileHandle = CreateFile(FilePath->StartOfString,
@@ -291,6 +298,90 @@ HiliteFileFoundCallback(
 
     return TRUE;
 }
+
+/**
+ A callback that is invoked when a directory cannot be successfully enumerated.
+
+ @param FilePath Pointer to the file path that could not be enumerated.
+
+ @param ErrorCode The Win32 error code describing the failure.
+
+ @param Depth Recursion depth, ignored in this application.
+
+ @param Context Pointer to the context block indicating whether the
+        enumeration was recursive.  Recursive enumerates do not complain
+        if a matching file is not in every single directory, because
+        common usage expects files to be in a subset of directories only.
+
+ @return TRUE to continute enumerating, FALSE to abort.
+ */
+BOOL
+HiliteFileEnumerateErrorCallback(
+    __in PYORI_STRING FilePath,
+    __in DWORD ErrorCode,
+    __in DWORD Depth,
+    __in PVOID Context
+    )
+{
+    YORI_STRING UnescapedFilePath;
+    PHILITE_CONTEXT HiliteContext = (PHILITE_CONTEXT)Context;
+    BOOL Result = FALSE;
+
+    UNREFERENCED_PARAMETER(Depth);
+
+    YoriLibInitEmptyString(&UnescapedFilePath);
+    if (!YoriLibUnescapePath(FilePath, &UnescapedFilePath)) {
+        UnescapedFilePath.StartOfString = FilePath->StartOfString;
+        UnescapedFilePath.LengthInChars = FilePath->LengthInChars;
+    }
+
+    if (ErrorCode == ERROR_FILE_NOT_FOUND || ErrorCode == ERROR_PATH_NOT_FOUND) {
+        if (!HiliteContext->Recursive) {
+            YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("File or directory not found: %y\n"), &UnescapedFilePath);
+        }
+        Result = TRUE;
+    } else {
+        LPTSTR ErrText = YoriLibGetWinErrorText(ErrorCode);
+        YORI_STRING DirName;
+        LPTSTR FilePart;
+        YoriLibInitEmptyString(&DirName);
+        DirName.StartOfString = UnescapedFilePath.StartOfString;
+        FilePart = YoriLibFindRightMostCharacter(&UnescapedFilePath, '\\');
+        if (FilePart != NULL) {
+            DirName.LengthInChars = (DWORD)(FilePart - DirName.StartOfString);
+        } else {
+            DirName.LengthInChars = UnescapedFilePath.LengthInChars;
+        }
+        YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("Enumerate of %y failed: %s"), &DirName, ErrText);
+        YoriLibFreeWinErrorText(ErrText);
+    }
+    YoriLibFreeStringContents(&UnescapedFilePath);
+    return Result;
+}
+
+/**
+ Deallocate any user specified hilite criteria.
+
+ @param HiliteContext The context from which all user specified criteria
+        should be deallocated.
+ */
+VOID
+HiliteCleanupContext(
+    __in PHILITE_CONTEXT HiliteContext
+    )
+{
+    PHILITE_MATCH_CRITERIA MatchCriteria;
+    PYORI_LIST_ENTRY ListEntry;
+
+    ListEntry = YoriLibGetNextListEntry(&HiliteContext->Matches, NULL);
+    while (ListEntry != NULL) {
+        MatchCriteria = CONTAINING_RECORD(ListEntry, HILITE_MATCH_CRITERIA, ListEntry);
+        YoriLibRemoveListItem(&MatchCriteria->ListEntry);
+        YoriLibFree(MatchCriteria);
+        ListEntry = YoriLibGetNextListEntry(&HiliteContext->Matches, NULL);
+    }
+}
+
 
 #ifdef YORI_BUILTIN
 /**
@@ -324,7 +415,6 @@ ENTRYPOINT(
     DWORD i;
     DWORD StartArg = 0;
     DWORD MatchFlags;
-    BOOL Recursive = FALSE;
     BOOL BasicEnumeration = FALSE;
     HILITE_CONTEXT HiliteContext;
     CONSOLE_SCREEN_BUFFER_INFO ScreenInfo;
@@ -352,9 +442,11 @@ ENTRYPOINT(
 
             if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("?")) == 0) {
                 HiliteHelp();
+                HiliteCleanupContext(&HiliteContext);
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("license")) == 0) {
-                YoriLibDisplayMitLicense(_T("2018"));
+                YoriLibDisplayMitLicense(_T("2018-2019"));
+                HiliteCleanupContext(&HiliteContext);
                 return EXIT_SUCCESS;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("b")) == 0) {
                 BasicEnumeration = TRUE;
@@ -363,13 +455,14 @@ ENTRYPOINT(
                 if (i + 2 < ArgC) {
                     NewCriteria = YoriLibMalloc(sizeof(HILITE_MATCH_CRITERIA));
                     if (NewCriteria == NULL) {
+                        HiliteCleanupContext(&HiliteContext);
                         return EXIT_FAILURE;
                     }
                     NewCriteria->MatchType = HiliteMatchTypeContains;
                     YoriLibInitEmptyString(&NewCriteria->MatchString);
                     NewCriteria->MatchString.StartOfString = ArgV[i + 1].StartOfString;
                     NewCriteria->MatchString.LengthInChars = ArgV[i + 1].LengthInChars;
-                    NewCriteria->Color = YoriLibAttributeFromString(ArgV[i + 2].StartOfString);
+                    NewCriteria->Color = YoriLibAttributeFromLiteralString(ArgV[i + 2].StartOfString);
                     NewCriteria->Color = YoriLibResolveWindowColorComponents(NewCriteria->Color, HiliteContext.DefaultColor, FALSE);
                     YoriLibAppendList(&HiliteContext.Matches, &NewCriteria->ListEntry);
                     ArgumentUnderstood = TRUE;
@@ -379,13 +472,14 @@ ENTRYPOINT(
                 if (i + 2 < ArgC) {
                     NewCriteria = YoriLibMalloc(sizeof(HILITE_MATCH_CRITERIA));
                     if (NewCriteria == NULL) {
+                        HiliteCleanupContext(&HiliteContext);
                         return EXIT_FAILURE;
                     }
                     NewCriteria->MatchType = HiliteMatchTypeBeginsWith;
                     YoriLibInitEmptyString(&NewCriteria->MatchString);
                     NewCriteria->MatchString.StartOfString = ArgV[i + 1].StartOfString;
                     NewCriteria->MatchString.LengthInChars = ArgV[i + 1].LengthInChars;
-                    NewCriteria->Color = YoriLibAttributeFromString(ArgV[i + 2].StartOfString);
+                    NewCriteria->Color = YoriLibAttributeFromLiteralString(ArgV[i + 2].StartOfString);
                     NewCriteria->Color = YoriLibResolveWindowColorComponents(NewCriteria->Color, HiliteContext.DefaultColor, FALSE);
                     YoriLibAppendList(&HiliteContext.Matches, &NewCriteria->ListEntry);
                     ArgumentUnderstood = TRUE;
@@ -395,24 +489,29 @@ ENTRYPOINT(
                 HiliteContext.Insensitive = TRUE;
                 ArgumentUnderstood = TRUE;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("s")) == 0) {
-                Recursive = TRUE;
+                HiliteContext.Recursive = TRUE;
                 ArgumentUnderstood = TRUE;
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("t")) == 0) {
                 if (i + 2 < ArgC) {
                     NewCriteria = YoriLibMalloc(sizeof(HILITE_MATCH_CRITERIA));
                     if (NewCriteria == NULL) {
+                        HiliteCleanupContext(&HiliteContext);
                         return EXIT_FAILURE;
                     }
                     NewCriteria->MatchType = HiliteMatchTypeEndsWith;
                     YoriLibInitEmptyString(&NewCriteria->MatchString);
                     NewCriteria->MatchString.StartOfString = ArgV[i + 1].StartOfString;
                     NewCriteria->MatchString.LengthInChars = ArgV[i + 1].LengthInChars;
-                    NewCriteria->Color = YoriLibAttributeFromString(ArgV[i + 2].StartOfString);
+                    NewCriteria->Color = YoriLibAttributeFromLiteralString(ArgV[i + 2].StartOfString);
                     NewCriteria->Color = YoriLibResolveWindowColorComponents(NewCriteria->Color, HiliteContext.DefaultColor, FALSE);
                     YoriLibAppendList(&HiliteContext.Matches, &NewCriteria->ListEntry);
                     ArgumentUnderstood = TRUE;
                     i += 2;
                 }
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                StartArg = i + 1;
+                ArgumentUnderstood = TRUE;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -430,18 +529,17 @@ ENTRYPOINT(
     //  the file and use that
     //
 
-    if (StartArg == 0) {
-        DWORD FileType = GetFileType(GetStdHandle(STD_INPUT_HANDLE));
-        FileType = FileType & ~(FILE_TYPE_REMOTE);
-        if (FileType == FILE_TYPE_CHAR) {
+    if (StartArg == 0 || StartArg == ArgC) {
+        if (YoriLibIsStdInConsole()) {
             YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("No file or pipe for input\n"));
+            HiliteCleanupContext(&HiliteContext);
             return EXIT_FAILURE;
         }
 
         HiliteProcessStream(GetStdHandle(STD_INPUT_HANDLE), &HiliteContext);
     } else {
         MatchFlags = YORILIB_FILEENUM_RETURN_FILES | YORILIB_FILEENUM_DIRECTORY_CONTENTS;
-        if (Recursive) {
+        if (HiliteContext.Recursive) {
             MatchFlags |= YORILIB_FILEENUM_RECURSE_BEFORE_RETURN | YORILIB_FILEENUM_RECURSE_PRESERVE_WILD;
         }
         if (BasicEnumeration) {
@@ -450,9 +548,16 @@ ENTRYPOINT(
     
         for (i = StartArg; i < ArgC; i++) {
     
-            YoriLibForEachFile(&ArgV[i], MatchFlags, 0, HiliteFileFoundCallback, &HiliteContext);
+            YoriLibForEachStream(&ArgV[i],
+                                 MatchFlags,
+                                 0,
+                                 HiliteFileFoundCallback,
+                                 HiliteFileEnumerateErrorCallback,
+                                 &HiliteContext);
         }
     }
+
+    HiliteCleanupContext(&HiliteContext);
 
     if (HiliteContext.FilesFound == 0) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("hilite: no matching files found\n"));

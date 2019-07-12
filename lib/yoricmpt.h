@@ -53,6 +53,14 @@
 #define ENABLE_EXTENDED_FLAGS 0x0080
 #endif
 
+#ifndef COMMON_LVB_UNDERSCORE
+/**
+ Define for the console's underline functionality if the compiler doesn't
+ know about it.
+ */
+#define COMMON_LVB_UNDERSCORE      0x8000
+#endif
+
 
 #ifndef DWORD_PTR
 #ifndef _WIN64
@@ -79,6 +87,14 @@ typedef ULONG SIZE_T;
 #endif
 #endif
 
+#ifndef FIELD_OFFSET
+/**
+ Macro to find the offset of a member of a structure if the compilation
+ environment doesn't already define it.
+ */
+#define FIELD_OFFSET(T, F) ((DWORD)&(((T*)0)->F))
+#endif
+
 /**
  Define the error type for HRESULT.
  */
@@ -99,12 +115,20 @@ typedef long HRESULT;
 #define ERROR_ELEVATION_REQUIRED 740
 #endif
 
+#ifndef ERROR_OLD_WIN_VERSION
+/**
+ Define for the error indicating than an executable requires a newer version
+ of Windows.
+ */
+#define ERROR_OLD_WIN_VERSION 1150
+#endif
+
 #ifndef PROCESS_QUERY_LIMITED_INFORMATION
 /**
  Definition for opening processes with very limited access for compilation
  environments that don't define it.
  */
-#define PROCESS_QUERY_LIMITED_INFORMATION  (0x1000)  
+#define PROCESS_QUERY_LIMITED_INFORMATION  (0x1000)
 #endif
 
 #ifndef SE_MANAGE_VOLUME_NAME
@@ -194,12 +218,42 @@ typedef struct _YORI_LIB_PROCESS_PARAMETERS32 {
     /**
      Ignored for alignment.
      */
-    DWORD Ignored1[10];
+    DWORD Ignored1[4];
 
     /**
      Ignored for alignment.
      */
-    YORI_LIB_PTR32 Ignored2[8];
+    YORI_LIB_PTR32 Ignored2[10];
+
+    /**
+     The number of bytes in the ImagePathName.
+     */
+    WORD ImagePathNameLengthInBytes;
+
+    /**
+     The number of bytes allocated for the ImagePathName.
+     */
+    WORD ImagePathNameMaximumLengthInBytes;
+
+    /**
+     Pointer to the ImagePathName.
+     */
+    YORI_LIB_PTR32 ImagePathName;
+
+    /**
+     The number of bytes in CommandLine.
+     */
+    WORD CommandLineLengthInBytes;
+
+    /**
+     The number of bytes allocated for CommandLine.
+     */
+    WORD CommandLineMaximumLengthInBytes;
+
+    /**
+     Pointer to the CommandLine.
+     */
+    YORI_LIB_PTR32 CommandLine;
 
     /**
      Pointer to the process environment block.
@@ -208,9 +262,10 @@ typedef struct _YORI_LIB_PROCESS_PARAMETERS32 {
 } YORI_LIB_PROCESS_PARAMETERS32, *PYORI_LIB_PROCESS_PARAMETERS32;
 
 /**
- A structure corresponding to a PEB in a 32 bit child process.
+ A structure corresponding to a PEB in a 32 bit child process when viewed from
+ a 32 bit debugger process.
  */
-typedef struct _YORI_LIB_PEB32 {
+typedef struct _YORI_LIB_PEB32_NATIVE {
     /**
      Ignored for alignment.
      */
@@ -256,7 +311,194 @@ typedef struct _YORI_LIB_PEB32 {
      */
     WORD OSCSDVersion;
 
-} YORI_LIB_PEB32, *PYORI_LIB_PEB32;
+} YORI_LIB_PEB32_NATIVE, *PYORI_LIB_PEB32_NATIVE;
+
+/**
+ A structure corresponding to a PEB in a 32 bit child process on 64 bit
+ versions of Windows when viewed through a 64 bit debugger.
+ */
+typedef struct _YORI_LIB_PEB32_WOW {
+    /**
+     Ignored for alignment.
+     */
+    DWORD Flags;
+
+    /**
+     Ignored for alignment.
+     */
+    YORI_LIB_PTR32 Ignored[3];
+
+    /**
+     Pointer to the process parameters.
+     */
+    PYORI_LIB_PROCESS_PARAMETERS32 ProcessParameters;
+
+    /**
+     Ignored for alignment.
+     */
+    YORI_LIB_PTR32 Ignored2[17];
+
+    /**
+     Ignored for alignment.
+     */
+    DWORD Ignored3[18];
+
+    /**
+     The major OS version to report to the application.
+     */
+    DWORD OSMajorVersion;
+
+    /**
+     The minor OS version to report to the application.
+     */
+    DWORD OSMinorVersion;
+
+    /**
+     The build number to report to the application.
+     */
+    WORD OSBuildNumber;
+
+    /**
+     The servicing number.
+     */
+    WORD OSCSDVersion;
+
+} YORI_LIB_PEB32_WOW, *PYORI_LIB_PEB32_WOW;
+
+/**
+ A minimal definition of a 32 bit TEB, suitable for finding a 32 bit PEB.
+ */
+typedef struct _YORI_LIB_TEB32 {
+
+    /**
+     Unknown and reserved for alignment.
+     */
+    DWORD Ignored[12];
+
+    /**
+     A 32 bit pointer to the 32 bit PEB.
+     */
+    DWORD Peb32Address;
+} YORI_LIB_TEB32, *PYORI_LIB_TEB32;
+
+/**
+ Indicates that control registers (eip etc) be captured.
+ */
+#define YORI_WOW64_CONTEXT_CONTROL (0x00010001)
+
+/**
+ Indicates that integer registers (eax, ebx et al) be captured.
+ */
+#define YORI_WOW64_CONTEXT_INTEGER (0x00010002)
+
+/**
+ Saved registers from a 32 bit process running within a 64 bit OS.  Not all
+ 64 bit compilation environments define this.
+ */
+typedef struct _YORI_LIB_WOW64_CONTEXT {
+
+    /**
+     Flags indicating the set of registers to capture.
+     */
+    DWORD ContextFlags;
+
+    /**
+     CPU debug registers, unused in this application.
+     */
+    DWORD DebugRegisters[6];
+
+    /**
+     State about floating point, unused in this application.
+     */
+    DWORD FloatRegisters[28];
+
+    /**
+     The gs register.
+     */
+    DWORD SegGs;
+
+    /**
+     The fs register.
+     */
+    DWORD SegFs;
+
+    /**
+     The extra segment register.
+     */
+    DWORD SegEs;
+
+    /**
+     The data segment register.
+     */
+    DWORD SegDs;
+
+    /**
+     The edi register.
+     */
+    DWORD Edi;
+
+    /**
+     The esi register.
+     */
+    DWORD Esi;
+
+    /**
+     The ebx register.
+     */
+    DWORD Ebx;
+
+    /**
+     The edx register.
+     */
+    DWORD Edx;
+
+    /**
+     The ecx register.
+     */
+    DWORD Ecx;
+
+    /**
+     The eax register.
+     */
+    DWORD Eax;
+
+
+    /**
+     The stack base pointer.
+     */
+    DWORD Ebp;
+
+    /**
+     The instruction pointer.
+     */
+    DWORD Eip;
+
+    /**
+     The code segment register.
+     */
+    DWORD SegCs;
+
+    /**
+     Processor flags.
+     */
+    DWORD EFlags;
+
+    /**
+     The stack pointer register.
+     */
+    DWORD Esp;
+
+    /**
+     The stack segment register.
+     */
+    DWORD SegSs;
+
+    /**
+     Extra space used for some unknown OS specific reason.
+     */
+    DWORD Padding[128];
+
+} YORI_LIB_WOW64_CONTEXT, *PYORI_LIB_WOW64_CONTEXT;
 
 /**
  The size of a 64 bit pointer.
@@ -270,12 +512,52 @@ typedef struct _YORI_LIB_PROCESS_PARAMETERS64 {
     /**
      Ignored for alignment.
      */
-    DWORD Ignored1[16];
+    DWORD Ignored1[4];
 
     /**
      Ignored for alignment.
      */
-    YORI_LIB_PTR64 Ignored2[8];
+    YORI_LIB_PTR64 Ignored2[10];
+
+    /**
+     The number of bytes in the ImagePathName.
+     */
+    WORD ImagePathNameLengthInBytes;
+
+    /**
+     The number of bytes allocated for the ImagePathName.
+     */
+    WORD ImagePathNameMaximumLengthInBytes;
+
+    /**
+     Padding in 64 bit
+     */
+    DWORD Ignored3;
+
+    /**
+     Pointer to the ImagePathName.
+     */
+    YORI_LIB_PTR64 ImagePathName;
+
+    /**
+     The number of bytes in CommandLine.
+     */
+    WORD CommandLineLengthInBytes;
+
+    /**
+     The number of bytes allocated for CommandLine.
+     */
+    WORD CommandLineMaximumLengthInBytes;
+
+    /**
+     Padding in 64 bit
+     */
+    DWORD Ignored4;
+
+    /**
+     Pointer to the CommandLine.
+     */
+    YORI_LIB_PTR64 CommandLine;
 
     /**
      Pointer to the process environment block.
@@ -334,6 +616,223 @@ typedef struct _YORI_LIB_PEB64 {
 } YORI_LIB_PEB64, *PYORI_LIB_PEB64;
 
 /**
+ Definition of the system process information enumeration class for
+ NtQuerySystemInformation .
+ */
+#define SystemProcessInformation (5)
+
+/**
+ Information returned about every process in the system.
+ */
+typedef struct _YORI_SYSTEM_PROCESS_INFORMATION {
+
+    /**
+     Offset from the beginning of this structure to the next entry, in bytes.
+     */
+    ULONG NextEntryOffset;
+
+    /**
+     Ignored in this application.
+     */
+    BYTE Reserved1[52];
+
+    /**
+     The number of bytes in the image name.
+     */
+    USHORT ImageNameLengthInBytes;
+
+    /**
+     The number of bytes allocated for the image name.
+     */
+    USHORT ImageNameMaximumLengthInBytes;
+
+    /**
+     Pointer to the image name.
+     */
+    LPWSTR ImageName;
+
+    /**
+     Ignored in this application.
+     */
+    ULONG Reserved2;
+
+    /**
+     The process identifier.
+     */
+    DWORD_PTR ProcessId;
+
+    /**
+     Ignored in this application.
+     */
+    PVOID Reserved3[5];
+
+    /**
+     Ignored in this application.
+     */
+    ULONG Reserved4[3];
+
+    /**
+     The number of bytes in the working set of the process.
+     */
+    SIZE_T WorkingSetSize;
+
+    /**
+     Ignored in this application.
+     */
+    PVOID Reserved5[4];
+
+    /**
+     The number of bytes committed by the process.
+     */
+    SIZE_T CommitSize;
+} YORI_SYSTEM_PROCESS_INFORMATION, *PYORI_SYSTEM_PROCESS_INFORMATION;
+
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ an unknown product.
+ */
+#define PRODUCT_UNDEFINED                           0x00000000
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the datacenter server core product.
+ */
+#define PRODUCT_DATACENTER_SERVER_CORE              0x0000000C
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the standard server core product.
+ */
+#define PRODUCT_STANDARD_SERVER_CORE                0x0000000D
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the enterprise server core product.
+ */
+#define PRODUCT_ENTERPRISE_SERVER_CORE              0x0000000E
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the web server core product.
+ */
+#define PRODUCT_WEB_SERVER_CORE                     0x0000001D
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the datacenter server core product without hyper-v.
+ */
+#define PRODUCT_DATACENTER_SERVER_CORE_V            0x00000027
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the standard server core product without hyper-v.
+ */
+#define PRODUCT_STANDARD_SERVER_CORE_V              0x00000028
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the enterprise server core product without hyper-v.
+ */
+#define PRODUCT_ENTERPRISE_SERVER_CORE_V            0x00000029
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the hyper-v server product.
+ */
+#define PRODUCT_HYPERV                              0x0000002A
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the express storage server core product.
+ */
+#define PRODUCT_STORAGE_EXPRESS_SERVER_CORE         0x0000002B
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the standard storage server core product.
+ */
+#define PRODUCT_STORAGE_STANDARD_SERVER_CORE        0x0000002C
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the workgroup storage server core product.
+ */
+#define PRODUCT_STORAGE_WORKGROUP_SERVER_CORE       0x0000002D
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the enterprise storage server core product.
+ */
+#define PRODUCT_STORAGE_ENTERPRISE_SERVER_CORE      0x0000002E
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the standard solutions server core product.
+ */
+#define PRODUCT_STANDARD_SERVER_SOLUTIONS_CORE      0x00000035
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the embedded solutions server core product.
+ */
+#define PRODUCT_SOLUTION_EMBEDDEDSERVER_CORE        0x00000039
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the small business server premium server core product.
+ */
+#define PRODUCT_SMALLBUSINESS_SERVER_PREMIUM_CORE   0x0000003F
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the datacenter server core product.
+ */
+#define PRODUCT_DATACENTER_A_SERVER_CORE            0x00000091
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the standard server core product.
+ */
+#define PRODUCT_STANDARD_A_SERVER_CORE              0x00000092
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the datacenter server core product.
+ */
+#define PRODUCT_DATACENTER_WS_SERVER_CORE           0x00000093
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the standard server core product.
+ */
+#define PRODUCT_STANDARD_WS_SERVER_CORE             0x00000094
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the datacenter server core product.
+ */
+#define PRODUCT_DATACENTER_EVALUATION_SERVER_CORE   0x0000009F
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the standard server core product.
+ */
+#define PRODUCT_STANDARD_EVALUATION_SERVER_CORE     0x000000A0
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ the azure server core product.
+ */
+#define PRODUCT_AZURE_SERVER_CORE                   0x000000A8
+
+/**
+ If not defined by the compilation environment, the product identifier for
+ an unlicensed product.
+ */
+#define PRODUCT_UNLICENSED                          0xABCDABCD
+
+/**
  An implementation of the OSVERSIONINFO structure.
  */
 typedef struct _YORI_OS_VERSION_INFO {
@@ -368,6 +867,146 @@ typedef struct _YORI_OS_VERSION_INFO {
      */
     TCHAR szCSDVersion[128];
 } YORI_OS_VERSION_INFO, *PYORI_OS_VERSION_INFO;
+
+/**
+ Output from the GetSystemInfo system call.  This is defined here so that it
+ can contain newer fields than older compilers include, which may be returned
+ from an OS regardless of how old the compiler is.
+ */
+typedef struct _YORI_SYSTEM_INFO {
+    union {
+        /**
+         Historic representation of a system architecture, used in NT 3.x
+         */
+        DWORD dwOemId;
+        struct {
+
+            /**
+             Current representation of a system architecture, used in NT4+
+             */
+            WORD wProcessorArchitecture;
+
+            /**
+             "Unused" except as above
+             */
+            WORD wReserved;
+        };
+    };
+
+    /**
+     The size of a memory page, in bytes
+     */
+    DWORD dwPageSize;
+
+    /**
+     The base address of usermode memory
+     */
+    LPVOID lpMinimumApplicationAddress;
+
+    /**
+     The upper address of usermode memory
+     */
+    LPVOID lpMaximumApplicationAddress;
+
+    /**
+     A mask of CPUs that are currently in use
+     */
+    DWORD_PTR dwActiveProcessorMask;
+
+    /**
+     The number of CPUs that are currently in use
+     */
+    DWORD dwNumberOfProcessors;
+
+    /**
+     The type of CPUs that are currently in use.  Note this refers to the
+     specific type of processor, not the process architecture, which is
+     returned above
+     */
+    DWORD dwProcessorType;
+
+    /**
+     The minimum number of bytes that can be allocated from the system heap
+     */
+    DWORD dwAllocationGranularity;
+
+    /**
+     Information about the specific model of processor
+     */
+    WORD wProcessorLevel;
+
+    /**
+     Information about the specific model of processor
+     */
+    WORD wProcessorRevision;
+} YORI_SYSTEM_INFO, *PYORI_SYSTEM_INFO;
+
+/**
+ Information about memory usage for the system and the process.
+ */
+typedef struct _YORI_MEMORYSTATUSEX {
+
+    /**
+     The length of the structure, in bytes.
+     */
+    DWORD dwLength;
+
+    /**
+     The percentage of memory used.
+     */
+    DWORD dwMemoryLoad;
+
+    /**
+     The amount of physical memory, in bytes.
+     */
+    DWORDLONG ullTotalPhys;
+
+    /**
+     The amount of available physical memory, in bytes.
+     */
+    DWORDLONG ullAvailPhys;
+
+    /**
+     The amount of physical memory plus page file size, in bytes.
+     */
+    DWORDLONG ullTotalPageFile;
+
+    /**
+     The amount of available physical memory plus page file size, in bytes.
+     */
+    DWORDLONG ullAvailPageFile;
+
+    /**
+     The amount of virtual address space in the process, in bytes.
+     */
+    DWORDLONG ullTotalVirtual;
+
+    /**
+     The amount of available virtual address space in the process, in bytes.
+     */
+    DWORDLONG ullAvailVirtual;
+
+    /**
+     The amount of virtual address space that is addressable but not available
+     to the process, in bytes.
+     */
+    DWORDLONG ullAvailExtendedVirtual;
+} YORI_MEMORYSTATUSEX, *PYORI_MEMORYSTATUSEX;
+
+#ifndef STARTF_TITLEISLINKNAME
+/**
+ Indicate that the title field in STARTUPINFO is really a shortcut name so the
+ console can populate console properties from it.
+ */
+#define STARTF_TITLEISLINKNAME 0x800
+#endif
+
+#ifndef EWX_POWEROFF
+/**
+ Flag to tell the system to power off after shutdown.
+ */
+#define EWX_POWEROFF 0x00000008
+#endif
 
 #ifndef FSCTL_SET_REPARSE_POINT
 
@@ -477,6 +1116,183 @@ typedef struct _YORI_OS_VERSION_INFO {
 #define COMPRESSION_FORMAT_LZNT1        (0x0002)
 #endif
 
+#ifndef FSCTL_GET_NTFS_VOLUME_DATA
+/**
+ Specifies the FSCTL_GET_NTFS_VOLUME_DATA numerical representation if the
+ compilation environment doesn't provide it.
+ */
+#define FSCTL_GET_NTFS_VOLUME_DATA       CTL_CODE(FILE_DEVICE_FILE_SYSTEM, 25,  METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+/**
+ Information returned from FSCTL_GET_NTFS_VOLUME_DATA.
+ */
+typedef struct {
+
+    /**
+     The full 64 bit serial number.
+     */
+    LARGE_INTEGER SerialNumber;
+
+    /**
+     The number of sectors on the volume.
+     */
+    LARGE_INTEGER NumberSectors;
+
+    /**
+     The number of clusters on the volume.
+     */
+    LARGE_INTEGER TotalClusters;
+
+    /**
+     The number of free clusters on the volume.
+     */
+    LARGE_INTEGER FreeClusters;
+
+    /**
+     The number of reserved clusters on the volume.
+     */
+    LARGE_INTEGER TotalReserved;
+
+    /**
+     The bytes in each logical sector.
+     */
+    DWORD BytesPerSector;
+
+    /**
+     The bytes in each file system allocation unit.
+     */
+    DWORD BytesPerCluster;
+
+    /**
+     The bytes in each MFT file record.
+     */
+    DWORD BytesPerFileRecordSegment;
+
+    /**
+     The clusters in each file record.
+     */
+    DWORD ClustersPerFileRecordSegment;
+
+    /**
+     The amount of space ever used in the MFT for file records.
+     */
+    LARGE_INTEGER MftValidDataLength;
+
+    /**
+     The volume offset of the first extent of the MFT.
+     */
+    LARGE_INTEGER MftStartLcn;
+
+    /**
+     The volume offset of the first extent of the MFT backup.
+     */
+    LARGE_INTEGER Mft2StartLcn;
+
+    /**
+     The beginning of the region of the volume used to host MFT allocations.
+     */
+    LARGE_INTEGER MftZoneStart;
+
+    /**
+     The end of the region of the volume used to host MFT allocations.
+     */
+    LARGE_INTEGER MftZoneEnd;
+
+} NTFS_VOLUME_DATA_BUFFER;
+
+/**
+ Pointer to information returned from FSCTL_GET_NTFS_VOLUME_DATA.
+ */
+typedef NTFS_VOLUME_DATA_BUFFER *PNTFS_VOLUME_DATA_BUFFER;
+
+#endif
+
+#ifndef FSCTL_GET_REFS_VOLUME_DATA
+/**
+ Specifies the FSCTL_GET_REFS_VOLUME_DATA numerical representation if the
+ compilation environment doesn't provide it.
+ */
+#define FSCTL_GET_REFS_VOLUME_DATA       CTL_CODE(FILE_DEVICE_FILE_SYSTEM, 182, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+/**
+ Information returned from FSCTL_GET_REFS_VOLUME_DATA.
+ */
+typedef struct {
+
+    /**
+     The number of bytes populated into the output structure.
+     */
+    DWORD ByteCount;
+
+    /**
+     The major version of the file system.
+     */
+    DWORD MajorVersion;
+
+    /**
+     The minor version of the file system.
+     */
+    DWORD MinorVersion;
+
+    /**
+     The bytes in each physical sector.
+     */
+    DWORD BytesPerPhysicalSector;
+
+    /**
+     The full 64 bit serial number.
+     */
+    LARGE_INTEGER SerialNumber;
+
+    /**
+     The number of sectors on the volume.
+     */
+    LARGE_INTEGER NumberSectors;
+
+    /**
+     The number of clusters on the volume.
+     */
+    LARGE_INTEGER TotalClusters;
+
+    /**
+     The number of free clusters on the volume.
+     */
+    LARGE_INTEGER FreeClusters;
+
+    /**
+     The number of reserved clusters on the volume.
+     */
+    LARGE_INTEGER TotalReserved;
+
+    /**
+     The bytes in each logical sector.
+     */
+    DWORD BytesPerSector;
+
+    /**
+     The bytes in each file system allocation unit.
+     */
+    DWORD BytesPerCluster;
+
+    /**
+     The largest file that may be stored directly in the directory.
+     */
+    LARGE_INTEGER MaximumSizeOfResidentFile;
+
+    /**
+     Reserved space to add extra pieces of information without needing to
+     recompile all code using this structure.
+     */
+    LARGE_INTEGER Reserved[10];
+
+} REFS_VOLUME_DATA_BUFFER;
+
+/**
+ Pointer to information returned from FSCTL_GET_REFS_VOLUME_DATA.
+ */
+typedef REFS_VOLUME_DATA_BUFFER *PREFS_VOLUME_DATA_BUFFER;
+
+#endif
 
 #ifndef FSCTL_GET_RETRIEVAL_POINTERS
 /**
@@ -692,6 +1508,69 @@ typedef struct {
 typedef USN_RECORD *PUSN_RECORD;
 #endif
 
+#ifndef FSCTL_QUERY_USN_JOURNAL
+
+/**
+ Specifies the FSCTL_QUERY_USN_JOURNAL numerical representation if the
+ compilation environment doesn't provide it.
+ */
+#define FSCTL_QUERY_USN_JOURNAL         CTL_CODE(FILE_DEVICE_FILE_SYSTEM, 61,  METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+/**
+ Information returned from FSCTL_QUERY_USN_JOURNAL where compiler doesn't
+ define it.
+ */
+typedef struct {
+
+    /**
+     The USN journal identifier. This is generated each time a new journal is
+     created.
+     */
+    DWORDLONG UsnJournalID;
+
+    /**
+     The first valid USN record within the journal.
+     */
+    DWORDLONG FirstUsn;
+
+    /**
+     The next USN number to allocate.  All numbers between FirstUsn and
+     NextUsn exclusive are valid in the journal.
+     */
+    DWORDLONG NextUsn;
+
+    /**
+     The lowest valid USN number.
+     */
+    DWORDLONG LowestValidUsn;
+
+    /**
+     The maximum valid USN number.
+     */
+    DWORDLONG MaxUsn;
+
+    /**
+     The maximum size of the journal in bytes.
+     */
+    DWORDLONG MaximumSize;
+
+    /**
+     The amount of allocation to add and remove from a journal in a single
+     operation.
+     */
+    DWORDLONG AllocationDelta;
+
+} USN_JOURNAL_DATA;
+
+/**
+ Pointer to information returned from FSCTL_QUERY_USN_JOURNAL where compiler
+ doesn't define it.
+ */
+typedef USN_JOURNAL_DATA *PUSN_JOURNAL_DATA;
+
+#endif
+
+
 #ifndef FSCTL_GET_EXTERNAL_BACKING
 
 /**
@@ -883,6 +1762,63 @@ typedef struct _FILE_STANDARD_INFO {
 #define FileStandardInfo    (0x000000001)
 #endif
 
+#ifndef STORAGE_INFO_FLAGS_ALIGNED_DEVICE
+
+/**
+ A structure describing sector information about a storage device.
+ */
+typedef struct _FILE_STORAGE_INFO {
+
+    /**
+     The traditional sector size describing the smallest unit that can be
+     read or written to the device via its interface.
+     */
+    ULONG LogicalBytesPerSector;
+
+    /**
+     The smallest unit that the device can write in a single operation. A
+     device may write a larger amount internally than it is willing to
+     accept via its interface by performing reading and writing internally.
+     */
+    ULONG PhysicalBytesPerSectorForAtomicity;
+
+    /**
+     The unit that a device can read or write without incurring a performance
+     penalty.
+     */
+    ULONG PhysicalBytesPerSectorForPerformance;
+
+    /**
+     The smallest unit that the file system is going to treat as an atomic
+     write.  This value may have adjustments applied over the raw device
+     requirement.
+     */
+    ULONG FileSystemEffectivePhysicalBytesPerSectorForAtomicity;
+
+    /**
+     Flags, unused in this program.
+     */
+    ULONG Flags;
+
+    /**
+     Alignment within the first physical sector of the first logical sector.
+     */
+    ULONG ByteOffsetForSectorAlignment;
+
+    /**
+     Alignment of partitions on the device to ensure physical sector
+     alignment.
+     */
+    ULONG ByteOffsetForPartitionAlignment;
+} FILE_STORAGE_INFO, *PFILE_STORAGE_INFO;
+
+/**
+ The identifier of the request type that returns the above structure.
+ */
+#define FileStorageInfo    (0x000000010)
+
+#endif
+
 #ifndef IMAGE_FILE_MACHINE_AMD64
 /**
  If the compilation environment doesn't provide it, the value for an
@@ -1037,6 +1973,129 @@ typedef struct _GUID {
 #endif
 
 /**
+ A processor architecture identifier for i386.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_INTEL           0
+
+/**
+ A processor architecture identifier for MIPS.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_MIPS            1
+
+/**
+ A processor architecture identifier for Alpha.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_ALPHA           2
+
+/**
+ A processor architecture identifier for PowerPC.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_PPC             3
+
+/**
+ A processor architecture identifier for ARM.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_ARM             5
+
+/**
+ A processor architecture identifier for Itanium.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_IA64            6
+
+/**
+ A processor architecture identifier for AMD64.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_AMD64           9
+
+/**
+ A virtual processor architecture identifier for an i386 binary running under
+ emulation on any 64 bit host environment.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_IA32_ON_WIN64   10
+
+/**
+ A processor architecture identifier for ARM64.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_ARM64           12
+
+/**
+ A virtual processor architecture identifier for an arm binary running under
+ emulation on any 64 bit host environment.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_ARM32_ON_WIN64  13
+
+/**
+ A virtual processor architecture identifier for an i386 binary running under
+ emulation on an arm64 host environment.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_IA32_ON_ARM64   14
+
+/**
+ An unknown processor architecture identifier.
+ */
+#define YORI_PROCESSOR_ARCHITECTURE_UNKNOWN         0xFFFF
+
+/**
+ A processor identifier for a 386.  This processor is part of the
+ YORI_PROCESSOR_ARCHITECTURE_INTEL family.
+ */
+#define YORI_PROCESSOR_INTEL_386                    386
+
+/**
+ A processor identifier for a 486.  This processor is part of the
+ YORI_PROCESSOR_ARCHITECTURE_INTEL family.
+ */
+#define YORI_PROCESSOR_INTEL_486                    486
+
+/**
+ A processor identifier for a Pentium.  This processor is part of the
+ YORI_PROCESSOR_ARCHITECTURE_INTEL family.
+ */
+#define YORI_PROCESSOR_INTEL_PENTIUM                586
+
+/**
+ A processor identifier for a 686.  This processor is part of the
+ YORI_PROCESSOR_ARCHITECTURE_INTEL family.
+ */
+#define YORI_PROCESSOR_INTEL_686                    686
+
+/**
+ A processor identifier for an R4000.  This processor is part of the
+ YORI_PROCESSOR_ARCHITECTURE_MIPS family.
+ */
+#define YORI_PROCESSOR_MIPS_R4000                   4000
+
+/**
+ A processor identifier for a 21064.  This processor is part of the
+ YORI_PROCESSOR_ARCHITECTURE_ALPHA family.
+ */
+#define YORI_PROCESSOR_ALPHA_21064                  21064
+
+/**
+ A processor identifier for a 601.  This processor is part of the
+ YORI_PROCESSOR_ARCHITECTURE_PPC family.
+ */
+#define YORI_PROCESSOR_PPC_601                      601
+
+/**
+ A processor identifier for a 603.  This processor is part of the
+ YORI_PROCESSOR_ARCHITECTURE_PPC family.
+ */
+#define YORI_PROCESSOR_PPC_603                      603
+
+/**
+ A processor identifier for a 604.  This processor is part of the
+ YORI_PROCESSOR_ARCHITECTURE_PPC family.
+ */
+#define YORI_PROCESSOR_PPC_604                      604
+
+/**
+ A processor identifier for a 620.  This processor is part of the
+ YORI_PROCESSOR_ARCHITECTURE_PPC family.
+ */
+#define YORI_PROCESSOR_PPC_620                      620
+
+/**
  A private definition of CONSOLE_FONT_INFOEX in case the compilation
  environment doesn't provide it.
  */
@@ -1127,6 +2186,53 @@ typedef struct _YORI_CONSOLE_SCREEN_BUFFER_INFOEX {
 } YORI_CONSOLE_SCREEN_BUFFER_INFOEX, *PYORI_CONSOLE_SCREEN_BUFFER_INFOEX;
 
 /**
+ Structure to change basic accounting information about a job.
+ */
+typedef struct _YORI_JOB_BASIC_ACCOUNTING_INFORMATION {
+
+    /**
+     The total amount of user mode processing consumed by the job.
+     */
+    LARGE_INTEGER TotalUserTime;
+
+    /**
+     The total amount of kernel mode processing consumed by the job.
+     */
+    LARGE_INTEGER TotalKernelTime;
+
+    /**
+     Field not needed/supported by YoriLib.
+     */
+    LARGE_INTEGER Unused1;
+
+    /**
+     Field not needed/supported by YoriLib.
+     */
+    LARGE_INTEGER Unused2;
+
+    /**
+     Field not needed/supported by YoriLib.
+     */
+    DWORD Unused3;
+
+    /**
+     The total number of processes that have been initiated.
+     */
+    DWORD TotalProcesses;
+
+    /**
+     The number of currently active processes.
+     */
+    DWORD ActiveProcesses;
+
+    /**
+     Field not needed/supported by YoriLib.
+     */
+    DWORD Unused4;
+
+} YORI_JOB_BASIC_ACCOUNTING_INFORMATION, *PYORI_JOB_BASIC_ACCOUNTING_INFORMATION;
+
+/**
  Structure to change basic information about a job.
  */
 typedef struct _YORI_JOB_BASIC_LIMIT_INFORMATION {
@@ -1177,6 +2283,32 @@ typedef struct _YORI_JOB_BASIC_LIMIT_INFORMATION {
      */
     DWORD Unused7;
 } YORI_JOB_BASIC_LIMIT_INFORMATION, *PYORI_JOB_BASIC_LIMIT_INFORMATION;
+
+/**
+ Information specifying how to associate a job object handle with a completion
+ port.
+ */
+typedef struct _YORI_JOB_ASSOCIATE_COMPLETION_PORT {
+
+    /**
+     A context pointer to associate with messages arriving on the completion
+     port.
+     */
+    PVOID Key;
+
+    /**
+     The completion port to associate the job object with.
+     */
+    HANDLE Port;
+} YORI_JOB_ASSOCIATE_COMPLETION_PORT, *PYORI_JOB_ASSOCIATE_COMPLETION_PORT;
+
+#ifndef HSHELL_RUDEAPPACTIVATED
+/**
+ A definition for HSHELL_RUDEAPPACTIVATED if it is not defined by the current
+ compilation environment.
+ */
+#define HSHELL_RUDEAPPACTIVATED (0x8000 | HSHELL_WINDOWACTIVATED)
+#endif
 
 #ifndef WM_SETICON
 /**
@@ -1573,7 +2705,7 @@ typedef CAB_CB_FCI_FILE_DELETE *PCAB_CB_FCI_FILE_DELETE;
  A prototype for FCICreate's temporary file callback.
  */
 typedef
-DWORD DIAMONDAPI
+BOOL DIAMONDAPI
 CAB_CB_FCI_GET_TEMP_FILE(LPSTR, INT, PVOID);
 
 /**
@@ -1585,7 +2717,7 @@ typedef CAB_CB_FCI_GET_TEMP_FILE *PCAB_CB_FCI_GET_TEMP_FILE;
  A prototype for FCIAddFile's get next cabinet callback.
  */
 typedef
-DWORD DIAMONDAPI
+BOOL DIAMONDAPI
 CAB_CB_FCI_GET_NEXT_CABINET(PCAB_FCI_CONTEXT, DWORD, PVOID);
 
 /**
@@ -1777,41 +2909,103 @@ typedef struct _YORI_SHFILEOP {
  */
 #define CSIDL_APPDATA 0x001a
 #endif
-#ifndef CSIDL_LOCALAPPDATA
+
+#ifndef CSIDL_COMMON_APPDATA
 /**
- The identifier of the AppData local directory to ShGetSpecialFolderPath.
+ The identifier of the common AppData directory to ShGetSpecialFolderPath.
  */
-#define CSIDL_LOCALAPPDATA 0x001c
+#define CSIDL_COMMON_APPDATA 0x0023
 #endif
+
+#ifndef CSIDL_COMMON_DESKTOPDIRECTORY
+/**
+ The identifier of the common Desktop directory to ShGetSpecialFolderPath.
+ */
+#define CSIDL_COMMON_DESKTOPDIRECTORY 0x0019
+#endif
+
+#ifndef CSIDL_COMMON_DOCUMENTS
+/**
+ The identifier of the common Documents directory to ShGetSpecialFolderPath.
+ */
+#define CSIDL_COMMON_DOCUMENTS 0x002e
+#endif
+
+#ifndef CSIDL_COMMON_PROGRAMS
+/**
+ The identifier of the common Programs directory to ShGetSpecialFolderPath.
+ */
+#define CSIDL_COMMON_PROGRAMS 0x0017
+#endif
+
+#ifndef CSIDL_COMMON_STARTMENU
+/**
+ The identifier of the common Start Menu directory to ShGetSpecialFolderPath.
+ */
+#define CSIDL_COMMON_STARTMENU 0x0016
+#endif
+
 #ifndef CSIDL_DESKTOPDIRECTORY
 /**
  The identifier of the Desktop directory to ShGetSpecialFolderPath.
  */
 #define CSIDL_DESKTOPDIRECTORY 0x0010
 #endif
+
+#ifndef CSIDL_LOCALAPPDATA
+/**
+ The identifier of the AppData local directory to ShGetSpecialFolderPath.
+ */
+#define CSIDL_LOCALAPPDATA 0x001c
+#endif
+
 #ifndef CSIDL_PERSONAL
 /**
  The identifier of the Documents directory to ShGetSpecialFolderPath.
  */
 #define CSIDL_PERSONAL 0x0005
 #endif
+
+#ifndef CSIDL_PROGRAM_FILES
+/**
+ The identifier of the Program Files directory to ShGetSpecialFolderPath.
+ */
+#define CSIDL_PROGRAM_FILES 0x0026
+#endif
+
 #ifndef CSIDL_PROGRAMS
 /**
  The identifier of the Start Menu Programs directory to ShGetSpecialFolderPath.
  */
 #define CSIDL_PROGRAMS 0x0002
 #endif
+
 #ifndef CSIDL_STARTMENU
 /**
  The identifier of the Start Menu directory to ShGetSpecialFolderPath.
  */
 #define CSIDL_STARTMENU 0x000b
 #endif
+
 #ifndef CSIDL_STARTUP
 /**
  The identifier of the Start Menu startup directory to ShGetSpecialFolderPath.
  */
 #define CSIDL_STARTUP 0x0007
+#endif
+
+#ifndef CSIDL_SYSTEM
+/**
+ The identifier of the System32 directory to ShGetSpecialFolderPath.
+ */
+#define CSIDL_SYSTEM 0x0025
+#endif
+
+#ifndef CSIDL_WINDOWS
+/**
+ The identifier of the System32 directory to ShGetSpecialFolderPath.
+ */
+#define CSIDL_WINDOWS 0x0024
 #endif
 
 extern const GUID FOLDERID_Downloads;
@@ -1982,6 +3176,42 @@ typedef struct _YORI_BROWSEINFO {
     INT ImageIndex;
 } YORI_BROWSEINFO, *PYORI_BROWSEINFO;
 
+/**
+ A message structure that describes a shell app bar.
+ */
+typedef struct _YORI_APPBARDATA {
+
+    /**
+     The number of bytes in this structure.
+     */
+    DWORD cbSize;
+
+    /**
+     The window that is requesting app bar services.
+     */
+    HWND hWnd;
+
+    /**
+     A message to use to indicate back to the application app bar
+     notifications.
+     */
+    UINT uCallbackMessage;
+
+    /**
+     The edge of the screen to attach to.
+     */
+    UINT uEdge;
+
+    /**
+     The window coordinates to use.
+     */
+    RECT rc;
+
+    /**
+     Extra information.
+     */
+    LPARAM lParam;
+} YORI_APPBARDATA, *PYORI_APPBARDATA;
 
 
 #ifndef STDMETHODCALLTYPE
@@ -2054,7 +3284,7 @@ typedef HRESULT STDMETHODCALLTYPE IPersistFile_SaveCompleted (IPersistFile * Thi
  Get the current file name associated with the object.
  */
 typedef HRESULT STDMETHODCALLTYPE IPersistFile_GetCurFile (IPersistFile * This, LPCWSTR *ppszFileName);
-    
+
 
 /**
  A set of functions defined by the IPersistFile interface.
@@ -2075,7 +3305,7 @@ typedef struct IPersistFileVtbl {
      Standard COM Release method.
      */
     IUnknown_Release * Release;
-    
+
     /**
      Indicates the GUID of the class implementing the functionality.
      */
@@ -2106,7 +3336,7 @@ typedef struct IPersistFileVtbl {
      Get the current file name associated with the object.
      */
     IPersistFile_GetCurFile * GetCurFile;
-    
+
 } IPersistFileVtbl;
 
 /**
@@ -2233,7 +3463,7 @@ struct IShellLinkWVtbl {
      Standard COM Release method.
      */
     IUnknown_Release * Release;
-    
+
 
     /**
      Get the path to the target on a shortcut.
@@ -2327,6 +3557,97 @@ struct IShellLinkWVtbl {
      */
     IShellLink_SetPath * SetPath;
 };
+
+/**
+ An instance of the IShellLinkDataList interface, consisting only of function
+ pointers.
+ */
+typedef struct IShellLinkDataList {
+
+    /**
+     The function pointer table associated with this object.
+     */
+    struct IShellLinkDataListVtbl * Vtbl;
+} IShellLinkDataList;
+
+typedef struct IShellLinkDataListVtbl IShellLinkDataListVtbl;
+
+/**
+ Add a block of data to a shortcut.
+ */
+typedef HRESULT STDMETHODCALLTYPE IShellLinkDataList_AddDataBlock (IShellLinkDataList * This, LPVOID DataBlock);
+
+/**
+ Read (aka copy out) a block of data from a shortcut.
+ */
+typedef HRESULT STDMETHODCALLTYPE IShellLinkDataList_CopyDataBlock (IShellLinkDataList * This, DWORD Signature, LPVOID * DataBlock);
+
+/**
+ Remove a block of data from a shortcut.
+ */
+typedef HRESULT STDMETHODCALLTYPE IShellLinkDataList_RemoveDataBlock (IShellLinkDataList * This, DWORD Signature);
+
+/**
+ Get the flags from a shortcut.
+ */
+typedef HRESULT STDMETHODCALLTYPE IShellLinkDataList_GetFlags (IShellLinkDataList * This, PDWORD Flags);
+
+/**
+ Set the flags from a shortcut.
+ */
+typedef HRESULT STDMETHODCALLTYPE IShellLinkDataList_SetFlags (IShellLinkDataList * This, DWORD Flags);
+
+/**
+ A set of functions defined by the IShellLinkDataList interface.
+ */
+struct IShellLinkDataListVtbl {
+
+    /**
+     Standard COM QueryInterface method.
+     */
+    IUnknown_QueryInterface * QueryInterface;
+
+    /**
+     Standard COM AddRef method.
+     */
+    IUnknown_AddRef * AddRef;
+
+    /**
+     Standard COM Release method.
+     */
+    IUnknown_Release * Release;
+
+
+    /**
+     Add a block of data to the shortcut.
+     */
+    IShellLinkDataList_AddDataBlock * AddDataBlock;
+
+    /**
+     Read (aka copy out) a block of data from the shortcut.
+     */
+    IShellLinkDataList_CopyDataBlock * CopyDataBlock;
+
+    /**
+     Remove a block of data from the shortcut.
+     */
+    IShellLinkDataList_RemoveDataBlock * RemoveDataBlock;
+
+    /**
+     Get the flags from the shortcut.
+     */
+    IShellLinkDataList_GetFlags * GetFlags;
+
+    /**
+     Set the flags on a shortcut.
+     */
+    IShellLinkDataList_SetFlags * SetFlags;
+};
+
+/**
+ The signature for console properties within a ShellLinkDataList.
+ */
+#define ISHELLLINKDATALIST_CONSOLE_PROPS_SIG (0xA0000002)
 
 #ifndef _VIRTUAL_STORAGE_TYPE_DEFINED
 /**
@@ -2530,10 +3851,214 @@ typedef struct _ATTACH_VIRTUAL_DISK_PARAMETERS {
  */
 #define ATTACH_VIRTUAL_DISK_FLAG_NO_SECURITY_DESCRIPTOR    (0x00000010)
 
+
+/**
+ If this flag is set, the file is created as fully allocated.  If it is not
+ set, the file allocation is created as needed.
+ */
+#define CREATE_VIRTUAL_DISK_FLAG_FULL_PHYSICAL_ALLOCATION  (0x00000001)
+
+/**
+ Information about how to create a VHD.
+ */
+typedef struct _CREATE_VIRTUAL_DISK_PARAMETERS {
+
+    /**
+     The version of this structure.  This program currently only uses version
+     1.
+     */
+    DWORD Version;
+    union {
+        struct {
+
+            /**
+             A unique identifier.  Set to zero to let the system determine it.
+             */
+            GUID UniqueId;
+
+            /**
+             The size of the VHD, in bytes.
+             */
+            DWORDLONG MaximumSize;
+
+            /**
+             For a differencing VHD, the size of the block to copy to the child
+             when a modification occurs.  Must be zero for a non-differencing
+             VHD.
+             */
+            DWORD BlockSizeInBytes;
+
+            /**
+             The sector size of the VHD.  VHD (version 1) only supports 512
+             bytes.
+             */
+            DWORD SectorSizeInBytes;
+
+            /**
+             Path to the parent VHD file when creating a differencing VHD.
+             */
+            PCWSTR ParentPath;
+
+            /**
+             Path to a device to provide data for the newly created VHD.
+             */
+            PCWSTR SourcePath;
+         } Version1;
+
+        struct {
+
+            /**
+             A unique identifier.  Set to zero to let the system determine it.
+             */
+            GUID UniqueId;
+
+            /**
+             The size of the VHD, in bytes.
+             */
+            DWORDLONG MaximumSize;
+
+            /**
+             For a differencing VHD, the size of the block to copy to the child
+             when a modification occurs.  Must be zero for a non-differencing
+             VHD.
+             */
+            DWORD BlockSizeInBytes;
+
+            /**
+             The sector size of the VHD.  VHD (version 1) only supports 512
+             bytes.
+             */
+            DWORD SectorSizeInBytes;
+
+            /**
+             The physical sector size of the VHD.
+             */
+            DWORD PhysicalSectorSizeInBytes;
+
+            /**
+             The open flags to apply to the handle.
+             */
+            DWORD OpenFlags;
+
+            /**
+             Path to the parent VHD file when creating a differencing VHD.
+             */
+            PCWSTR ParentPath;
+
+            /**
+             Path to a device to provide data for the newly created VHD.
+             */
+            PCWSTR SourcePath;
+
+            /**
+             The type of the parent.
+             */
+            DWORD ParentVirtualStorageType;
+
+            /**
+             The type of the source.
+             */
+            DWORD SourceVirtualStorageType;
+
+            GUID ResiliencyGuid;
+         } Version2;
+    };
+} CREATE_VIRTUAL_DISK_PARAMETERS, *PCREATE_VIRTUAL_DISK_PARAMETERS;
+
+/**
+ Information about how to compact a VHD.
+ */
+typedef struct _COMPACT_VIRTUAL_DISK_PARAMETERS {
+
+    /**
+     The version of this structure.
+     */
+    DWORD Version;
+    union {
+        struct {
+
+            /**
+             The new size for the VHD in bytes.
+             */
+            DWORD Unused;
+        } Version1;
+    };
+} COMPACT_VIRTUAL_DISK_PARAMETERS, *PCOMPACT_VIRTUAL_DISK_PARAMETERS;
+
+/**
+ Information about how to expand a VHD.
+ */
+typedef struct _EXPAND_VIRTUAL_DISK_PARAMETERS {
+
+    /**
+     The version of this structure.
+     */
+    DWORD Version;
+    union {
+        struct {
+
+            /**
+             The new size for the VHD in bytes.
+             */
+            DWORDLONG NewSizeInBytes;
+        } Version1;
+    };
+} EXPAND_VIRTUAL_DISK_PARAMETERS, *PEXPAND_VIRTUAL_DISK_PARAMETERS;
+
+/**
+ Information about how to resize a VHD.
+ */
+typedef struct _MERGE_VIRTUAL_DISK_PARAMETERS {
+
+    /**
+     The version of this structure.
+     */
+    DWORD Version;
+    union {
+        struct {
+
+            /**
+             The number of levels in the chain to merge.
+             */
+            DWORD DepthToMerge;
+        } Version1;
+    };
+} MERGE_VIRTUAL_DISK_PARAMETERS, *PMERGE_VIRTUAL_DISK_PARAMETERS;
+
+/**
+ Information about how to resize a VHD.
+ */
+typedef struct _RESIZE_VIRTUAL_DISK_PARAMETERS {
+
+    /**
+     The version of this structure.
+     */
+    DWORD Version;
+    union {
+        struct {
+
+            /**
+             The new size for the VHD in bytes.
+             */
+            DWORDLONG NewSizeInBytes;
+        } Version1;
+    };
+} RESIZE_VIRTUAL_DISK_PARAMETERS, *PRESIZE_VIRTUAL_DISK_PARAMETERS;
+
+/** 
+ A pseudo handle indicating the current terminal server server.
+ */
+#define WTS_CURRENT_SERVER_HANDLE NULL
+
+/**
+ An identifier for the current terminal server session.
+ */
+#define WTS_CURRENT_SESSION ((DWORD)-1)
+
 /**
  A prototype for the NtQueryInformationFile function.
  */
-typedef 
+typedef
 LONG WINAPI
 NT_QUERY_INFORMATION_FILE(HANDLE, PIO_STATUS_BLOCK, PVOID, DWORD, DWORD);
 
@@ -2545,7 +4070,7 @@ typedef NT_QUERY_INFORMATION_FILE *PNT_QUERY_INFORMATION_FILE;
 /**
  A prototype for the NtQueryInformationProcess function..
  */
-typedef 
+typedef
 LONG WINAPI
 NT_QUERY_INFORMATION_PROCESS(HANDLE, DWORD, PVOID, DWORD, PDWORD);
 
@@ -2555,9 +4080,33 @@ NT_QUERY_INFORMATION_PROCESS(HANDLE, DWORD, PVOID, DWORD, PDWORD);
 typedef NT_QUERY_INFORMATION_PROCESS *PNT_QUERY_INFORMATION_PROCESS;
 
 /**
+ A prototype for the NtQueryInformationThread function.
+ */
+typedef
+LONG WINAPI
+NT_QUERY_INFORMATION_THREAD(HANDLE, DWORD, PVOID, DWORD, PDWORD);
+
+/**
+ A prototype for a pointer to the NtQueryInformationThread function.
+ */
+typedef NT_QUERY_INFORMATION_THREAD *PNT_QUERY_INFORMATION_THREAD;
+
+/**
+ A prototype for the NtQuerySystemInformation function.
+ */
+typedef
+LONG WINAPI
+NT_QUERY_SYSTEM_INFORMATION(DWORD, PVOID, DWORD, PDWORD);
+
+/**
+ A prototype for a pointer to the NtQuerySystemInformation function.
+ */
+typedef NT_QUERY_SYSTEM_INFORMATION *PNT_QUERY_SYSTEM_INFORMATION;
+
+/**
  A prototype for the RtlGetLastNtStatus function.
  */
-typedef 
+typedef
 LONG WINAPI
 RTL_GET_LAST_NT_STATUS();
 
@@ -2588,6 +4137,18 @@ typedef struct _YORI_NTDLL_FUNCTIONS {
      NtQueryInformationProcess.
      */
     PNT_QUERY_INFORMATION_PROCESS pNtQueryInformationProcess;
+
+    /**
+     If it's available on the current system, a pointer to
+     NtQueryInformationThread.
+     */
+    PNT_QUERY_INFORMATION_THREAD pNtQueryInformationThread;
+
+    /**
+     If it's available on the current system, a pointer to
+     NtQuerySystemInformation.
+     */
+    PNT_QUERY_SYSTEM_INFORMATION pNtQuerySystemInformation;
 
     /**
      If it's available on the current system, a pointer to
@@ -2664,7 +4225,7 @@ typedef CREATE_SYMBOLIC_LINKW *PCREATE_SYMBOLIC_LINKW;
  A prototype for the FindFirstStreamW function.
  */
 typedef
-HANDLE WINAPI 
+HANDLE WINAPI
 FIND_FIRST_STREAMW(LPCWSTR, DWORD, PWIN32_FIND_STREAM_DATA, DWORD);
 
 /**
@@ -2676,7 +4237,7 @@ typedef FIND_FIRST_STREAMW *PFIND_FIRST_STREAMW;
  A prototype for the FindFirstVolumeW function.
  */
 typedef
-HANDLE WINAPI 
+HANDLE WINAPI
 FIND_FIRST_VOLUMEW(LPWSTR, DWORD);
 
 /**
@@ -2688,7 +4249,7 @@ typedef FIND_FIRST_VOLUMEW *PFIND_FIRST_VOLUMEW;
  A prototype for the FindNextStreamW function.
  */
 typedef
-BOOL WINAPI 
+BOOL WINAPI
 FIND_NEXT_STREAMW(HANDLE, PWIN32_FIND_STREAM_DATA);
 
 /**
@@ -2700,7 +4261,7 @@ typedef FIND_NEXT_STREAMW *PFIND_NEXT_STREAMW;
  A prototype for the FindNextVolumeW function.
  */
 typedef
-BOOL WINAPI 
+BOOL WINAPI
 FIND_NEXT_VOLUMEW(HANDLE, LPWSTR, DWORD);
 
 /**
@@ -2712,7 +4273,7 @@ typedef FIND_NEXT_VOLUMEW *PFIND_NEXT_VOLUMEW;
  A prototype for the FindVolumeClose function.
  */
 typedef
-BOOL WINAPI 
+BOOL WINAPI
 FIND_VOLUME_CLOSE(HANDLE);
 
 /**
@@ -2769,6 +4330,18 @@ GET_CONSOLE_ALIASESW(LPTSTR, DWORD, LPTSTR);
 typedef GET_CONSOLE_ALIASESW *PGET_CONSOLE_ALIASESW;
 
 /**
+ A prototype for the GetConsoleProcessList function.
+ */
+typedef
+DWORD WINAPI
+GET_CONSOLE_PROCESS_LIST(LPDWORD, DWORD);
+
+/**
+ A prototype for a pointer to the GetConsoleProcessList function.
+ */
+typedef GET_CONSOLE_PROCESS_LIST *PGET_CONSOLE_PROCESS_LIST;
+
+/**
  A prototype for the GetConsoleScreenBufferEx function.
  */
 typedef
@@ -2808,7 +4381,7 @@ typedef GET_CURRENT_CONSOLE_FONT_EX *PGET_CURRENT_CONSOLE_FONT_EX;
  A prototype for the GetDiskFreeSpaceExW function.
  */
 typedef
-BOOL WINAPI 
+BOOL WINAPI
 GET_DISK_FREE_SPACE_EXW(LPCWSTR, PLARGE_INTEGER, PLARGE_INTEGER, PLARGE_INTEGER);
 
 /**
@@ -2820,7 +4393,7 @@ typedef GET_DISK_FREE_SPACE_EXW *PGET_DISK_FREE_SPACE_EXW;
  A prototype for the GetEnvironmentStrings function.
  */
 typedef
-LPSTR WINAPI 
+LPSTR WINAPI
 GET_ENVIRONMENT_STRINGS();
 
 /**
@@ -2832,7 +4405,7 @@ typedef GET_ENVIRONMENT_STRINGS *PGET_ENVIRONMENT_STRINGS;
  A prototype for the GetEnvironmentStringsW function.
  */
 typedef
-LPWSTR WINAPI 
+LPWSTR WINAPI
 GET_ENVIRONMENT_STRINGSW();
 
 /**
@@ -2845,12 +4418,24 @@ typedef GET_ENVIRONMENT_STRINGSW *PGET_ENVIRONMENT_STRINGSW;
  */
 typedef
 BOOL WINAPI
-GET_FILE_INFORMATION_BY_HANDLE_EX(HANDLE, ULONG, PVOID, DWORD);
+GET_FILE_INFORMATION_BY_HANDLE_EX(HANDLE, DWORD, PVOID, DWORD);
 
 /**
  A prototype for a pointer to the GetFileInformationByHandleEx function.
  */
 typedef GET_FILE_INFORMATION_BY_HANDLE_EX *PGET_FILE_INFORMATION_BY_HANDLE_EX;
+
+/**
+ A prototype for the GetNativeSystemInfo function.
+ */
+typedef
+BOOL WINAPI
+GET_NATIVE_SYSTEM_INFO(PVOID);
+
+/**
+ A prototype for a pointer to the GetNativeSystemInfo function.
+ */
+typedef GET_NATIVE_SYSTEM_INFO *PGET_NATIVE_SYSTEM_INFO;
 
 /**
  A prototype for the GetPrivateProfileSectionNamesW function.
@@ -2863,6 +4448,18 @@ GET_PRIVATE_PROFILE_SECTION_NAMESW(LPWSTR, DWORD, LPCWSTR);
  A prototype for a pointer to the GetPrivateProfileSectionNamesW function.
  */
 typedef GET_PRIVATE_PROFILE_SECTION_NAMESW *PGET_PRIVATE_PROFILE_SECTION_NAMESW;
+
+/**
+ A prototype for the GetProductInfo function.
+ */
+typedef
+BOOL WINAPI
+GET_PRODUCT_INFO(DWORD, DWORD, DWORD, DWORD, PDWORD);
+
+/**
+ A prototype for a pointer to the GetProductInfo function.
+ */
+typedef GET_PRODUCT_INFO *PGET_PRODUCT_INFO;
 
 /**
  A prototype for the GetVersionExW function.
@@ -2901,6 +4498,18 @@ GET_VOLUME_PATH_NAMEW(LPCWSTR, LPWSTR, DWORD);
 typedef GET_VOLUME_PATH_NAMEW *PGET_VOLUME_PATH_NAMEW;
 
 /**
+ A prototype for the GlobalMemoryStatusEx function.
+ */
+typedef
+BOOL WINAPI
+GLOBAL_MEMORY_STATUS_EX(PYORI_MEMORYSTATUSEX);
+
+/**
+ A prototype for a pointer to the GlobalMemoryStatusEx function.
+ */
+typedef GLOBAL_MEMORY_STATUS_EX *PGLOBAL_MEMORY_STATUS_EX;
+
+/**
  A prototype for the IsWow64Process function.
  */
 typedef
@@ -2923,6 +4532,18 @@ QUERY_FULL_PROCESS_IMAGE_NAMEW(HANDLE, DWORD, LPTSTR, PDWORD);
  A prototype for a pointer to the the QueryFullProcessImageNameW function.
  */
 typedef QUERY_FULL_PROCESS_IMAGE_NAMEW *PQUERY_FULL_PROCESS_IMAGE_NAMEW;
+
+/**
+ A prototype for the QueryInformationJobObject function.
+ */
+typedef
+BOOL WINAPI
+QUERY_INFORMATION_JOB_OBJECT(HANDLE, DWORD, PVOID, DWORD, LPDWORD);
+
+/**
+ A prototype for a pointer to the QueryInformationJobObject function.
+ */
+typedef QUERY_INFORMATION_JOB_OBJECT *PQUERY_INFORMATION_JOB_OBJECT;
 
 /**
  A prototype for the RegisterApplicationRestart function.
@@ -2983,6 +4604,30 @@ WOW64_DISABLE_WOW64_FS_REDIRECTION(PVOID*);
  A prototype for a pointer to the Wow64DisableWow64FsRedirection function.
  */
 typedef WOW64_DISABLE_WOW64_FS_REDIRECTION *PWOW64_DISABLE_WOW64_FS_REDIRECTION;
+
+/**
+ A prototype for the Wow64GetThreadContext function.
+ */
+typedef
+BOOL WINAPI
+WOW64_GET_THREAD_CONTEXT(HANDLE, PYORI_LIB_WOW64_CONTEXT);
+
+/**
+ A prototype for a pointer to the Wow64GetThreadContext function.
+ */
+typedef WOW64_GET_THREAD_CONTEXT *PWOW64_GET_THREAD_CONTEXT;
+
+/**
+ A prototype for the Wow64SetThreadContext function.
+ */
+typedef
+BOOL WINAPI
+WOW64_SET_THREAD_CONTEXT(HANDLE, PYORI_LIB_WOW64_CONTEXT);
+
+/**
+ A prototype for a pointer to the Wow64SetThreadContext function.
+ */
+typedef WOW64_SET_THREAD_CONTEXT *PWOW64_SET_THREAD_CONTEXT;
 
 /**
  A structure containing optional function pointers to kernel32.dll exported
@@ -3071,6 +4716,11 @@ typedef struct _YORI_KERNEL32_FUNCTIONS {
     PGET_CONSOLE_ALIASESW pGetConsoleAliasesW;
 
     /**
+     If it's available on the current system, a pointer to GetConsoleProcessList.
+     */
+    PGET_CONSOLE_PROCESS_LIST pGetConsoleProcessList;
+
+    /**
      If it's available on the current system, a pointer to GetConsoleWindow.
      */
     PGET_CONSOLE_WINDOW pGetConsoleWindow;
@@ -3101,9 +4751,19 @@ typedef struct _YORI_KERNEL32_FUNCTIONS {
     PGET_FILE_INFORMATION_BY_HANDLE_EX pGetFileInformationByHandleEx;
 
     /**
+     If it's available on the current system, a pointer to GetNativeSystemInfo.
+     */
+    PGET_NATIVE_SYSTEM_INFO pGetNativeSystemInfo;
+
+    /**
      If it's available on the current system, a pointer to GetPrivateProfileSectionNamesW.
      */
     PGET_PRIVATE_PROFILE_SECTION_NAMESW pGetPrivateProfileSectionNamesW;
+
+    /**
+     If it's available on the current system, a pointer to GetProductInfo.
+     */
+    PGET_PRODUCT_INFO pGetProductInfo;
 
     /**
      If it's available on the current system, a pointer to GetVersionExW.
@@ -3121,6 +4781,11 @@ typedef struct _YORI_KERNEL32_FUNCTIONS {
     PGET_VOLUME_PATH_NAMEW pGetVolumePathNameW;
 
     /**
+     If it's available on the current system, a pointer to GlobalMemoryStatusEx.
+     */
+    PGLOBAL_MEMORY_STATUS_EX pGlobalMemoryStatusEx;
+
+    /**
      If it's available on the current system, a pointer to IsWow64Process.
      */
     PIS_WOW64_PROCESS pIsWow64Process;
@@ -3129,6 +4794,11 @@ typedef struct _YORI_KERNEL32_FUNCTIONS {
      If it's available on the current system, a pointer to QueryFullProcessImageNameW.
      */
     PQUERY_FULL_PROCESS_IMAGE_NAMEW pQueryFullProcessImageNameW;
+
+    /**
+     If it's available on the current system, a pointer to QueryInformationJobObject.
+     */
+    PQUERY_INFORMATION_JOB_OBJECT pQueryInformationJobObject;
 
     /**
      If it's available on the current system, a pointer to RegisterApplicationRestart.
@@ -3154,6 +4824,16 @@ typedef struct _YORI_KERNEL32_FUNCTIONS {
      If it's available on the current system, a pointer to Wow64DisableWow64FsRedirection.
      */
     PWOW64_DISABLE_WOW64_FS_REDIRECTION pWow64DisableWow64FsRedirection;
+
+    /**
+     If it's available on the current system, a pointer to Wow64GetThreadContext.
+     */
+    PWOW64_GET_THREAD_CONTEXT pWow64GetThreadContext;
+
+    /**
+     If it's available on the current system, a pointer to Wow64SetThreadContext.
+     */
+    PWOW64_SET_THREAD_CONTEXT pWow64SetThreadContext;
 } YORI_KERNEL32_FUNCTIONS, *PYORI_KERNEL32_FUNCTIONS;
 
 extern YORI_KERNEL32_FUNCTIONS DllKernel32;
@@ -3411,6 +5091,140 @@ typedef struct _YORI_ADVAPI32_FUNCTIONS {
 extern YORI_ADVAPI32_FUNCTIONS DllAdvApi32;
 
 /**
+ A prototype for the BCryptCloseAlgorithmProvider function.
+ */
+typedef
+LONG WINAPI
+BCRYPT_CLOSE_ALGORITHM_PROVIDER(PVOID, DWORD);
+
+/**
+ A prototype for a pointer to the BCryptCloseAlgorithmProvider function.
+ */
+typedef BCRYPT_CLOSE_ALGORITHM_PROVIDER *PBCRYPT_CLOSE_ALGORITHM_PROVIDER;
+
+/**
+ A prototype for the BCryptCreateHash function.
+ */
+typedef
+LONG WINAPI
+BCRYPT_CREATE_HASH(PVOID, PVOID*, PVOID, DWORD, PVOID, DWORD, DWORD);
+
+/**
+ A prototype for a pointer to the BCryptCreateHash function.
+ */
+typedef BCRYPT_CREATE_HASH *PBCRYPT_CREATE_HASH;
+
+/**
+ A prototype for the BCryptDestroyHash function.
+ */
+typedef
+LONG WINAPI
+BCRYPT_DESTROY_HASH(PVOID);
+
+/**
+ A prototype for a pointer to the BCryptDestroyHash function.
+ */
+typedef BCRYPT_DESTROY_HASH *PBCRYPT_DESTROY_HASH;
+
+/**
+ A prototype for the BCryptFinishHash function.
+ */
+typedef
+LONG WINAPI
+BCRYPT_FINISH_HASH(PVOID, PVOID, DWORD, DWORD);
+
+/**
+ A prototype for a pointer to the BCryptFinishHash function.
+ */
+typedef BCRYPT_FINISH_HASH *PBCRYPT_FINISH_HASH;
+
+/**
+ A prototype for the BCryptGetProperty function.
+ */
+typedef
+LONG WINAPI
+BCRYPT_GET_PROPERTY(PVOID, LPCWSTR, PVOID, DWORD, PDWORD, DWORD);
+
+/**
+ A prototype for a pointer to the BCryptGetProperty function.
+ */
+typedef BCRYPT_GET_PROPERTY *PBCRYPT_GET_PROPERTY;
+
+/**
+ A prototype for the BCryptHashData function.
+ */
+typedef
+LONG WINAPI
+BCRYPT_HASH_DATA(PVOID, PVOID, DWORD, DWORD);
+
+/**
+ A prototype for a pointer to the BCryptHashData function.
+ */
+typedef BCRYPT_HASH_DATA *PBCRYPT_HASH_DATA;
+
+/**
+ A prototype for the BCryptOpenAlgorithmProvider function.
+ */
+typedef
+LONG WINAPI
+BCRYPT_OPEN_ALGORITHM_PROVIDER(PVOID*, LPCWSTR, LPCWSTR, DWORD);
+
+/**
+ A prototype for a pointer to the BCryptOpenAlgorithmProvider function.
+ */
+typedef BCRYPT_OPEN_ALGORITHM_PROVIDER *PBCRYPT_OPEN_ALGORITHM_PROVIDER;
+
+/**
+ A structure containing optional function pointers to bcrypt.dll exported
+ functions which programs can operate without having hard dependencies on.
+ */
+typedef struct _YORI_BCRYPT_FUNCTIONS {
+    /**
+     A handle to the Dll module.
+     */
+    HINSTANCE hDll;
+
+    /**
+     If it's available on the current system, a pointer to BCryptCloseAlgorithmProvider.
+     */
+    PBCRYPT_CLOSE_ALGORITHM_PROVIDER pBCryptCloseAlgorithmProvider;
+
+    /**
+     If it's available on the current system, a pointer to BCryptCreateHash.
+     */
+    PBCRYPT_CREATE_HASH pBCryptCreateHash;
+
+    /**
+     If it's available on the current system, a pointer to BCryptDestroyHash.
+     */
+    PBCRYPT_DESTROY_HASH pBCryptDestroyHash;
+
+    /**
+     If it's available on the current system, a pointer to BCryptFinishHash.
+     */
+    PBCRYPT_FINISH_HASH pBCryptFinishHash;
+
+    /**
+     If it's available on the current system, a pointer to BCryptGetProperty.
+     */
+    PBCRYPT_GET_PROPERTY pBCryptGetProperty;
+
+    /**
+     If it's available on the current system, a pointer to BCryptHashData.
+     */
+    PBCRYPT_HASH_DATA pBCryptHashData;
+
+    /**
+     If it's available on the current system, a pointer to BCryptOpenAlgorithmProvider.
+     */
+    PBCRYPT_OPEN_ALGORITHM_PROVIDER pBCryptOpenAlgorithmProvider;
+
+} YORI_BCRYPT_FUNCTIONS, *PYORI_BCRYPT_FUNCTIONS;
+
+extern YORI_BCRYPT_FUNCTIONS DllBCrypt;
+
+
+/**
  A prototype for the FDICreate function.
  */
 typedef
@@ -3559,7 +5373,7 @@ typedef struct _YORI_CABINET_FUNCTIONS {
 
 extern YORI_CABINET_FUNCTIONS DllCabinet;
 
- 
+
 /**
  A prototype for the MiniDumpWriteDump function.
  */
@@ -3583,7 +5397,7 @@ typedef struct _YORI_DBGHELP_FUNCTIONS {
     HINSTANCE hDll;
 
     /**
-     If it's available on the current system, a pointer to FCIAddFile.
+     If it's available on the current system, a pointer to MiniDumpWriteDump.
      */
     PMINI_DUMP_WRITE_DUMP pMiniDumpWriteDump;
 } YORI_DBGHELP_FUNCTIONS, *PYORI_DBGHELP_FUNCTIONS;
@@ -3687,6 +5501,18 @@ typedef struct _YORI_PSAPI_FUNCTIONS {
 extern YORI_PSAPI_FUNCTIONS DllPsapi;
 
 /**
+ A prototype for the SHAppBarMessage function.
+ */
+typedef
+DWORD_PTR WINAPI
+SH_APP_BAR_MESSAGE(DWORD, PYORI_APPBARDATA);
+
+/**
+ A prototype for a pointer to the SHAppBarMessage function.
+ */
+typedef SH_APP_BAR_MESSAGE *PSH_APP_BAR_MESSAGE;
+
+/**
  A prototype for the SHBrowseForFolderW function.
  */
 typedef
@@ -3779,6 +5605,11 @@ typedef struct _YORI_SHELL32_FUNCTIONS {
      A handle to the Dll module.
      */
     HINSTANCE hDll;
+
+    /**
+     If it's available on the current system, a pointer to SHAppBarMessage.
+     */
+    PSH_APP_BAR_MESSAGE pSHAppBarMessage;
 
     /**
      If it's available on the current system, a pointer to SHBrowseForFolderW.
@@ -3885,6 +5716,18 @@ EMPTY_CLIPBOARD();
 typedef EMPTY_CLIPBOARD *PEMPTY_CLIPBOARD;
 
 /**
+ A prototype for the ExitWindowsEx function.
+ */
+typedef
+BOOL WINAPI
+EXIT_WINDOWS_EX(DWORD, DWORD);
+
+/**
+ A prototype for a pointer to the ExitWindowsEx function.
+ */
+typedef EXIT_WINDOWS_EX *PEXIT_WINDOWS_EX;
+
+/**
  A prototype for the FindWindowW function.
  */
 typedef
@@ -3945,6 +5788,18 @@ GET_WINDOW_RECT(HWND, LPRECT);
 typedef GET_WINDOW_RECT *PGET_WINDOW_RECT;
 
 /**
+ A prototype for the LockWorkStation function.
+ */
+typedef
+BOOL WINAPI
+LOCK_WORKSTATION();
+
+/**
+ A prototype for a pointer to the LockWorkStation function.
+ */
+typedef LOCK_WORKSTATION *PLOCK_WORKSTATION;
+
+/**
  A prototype for the MoveWindow function.
  */
 typedef
@@ -3979,6 +5834,18 @@ REGISTER_CLIPBOARD_FORMATW(LPCWSTR);
  A prototype for a pointer to the RegisterClipboardFormatW function.
  */
 typedef REGISTER_CLIPBOARD_FORMATW *PREGISTER_CLIPBOARD_FORMATW;
+
+/**
+ A prototype for the RegisterShellHookWindow function.
+ */
+typedef
+BOOL WINAPI
+REGISTER_SHELL_HOOK_WINDOW(HWND);
+
+/**
+ A prototype for a pointer to the RegisterShellHookWindow function.
+ */
+typedef REGISTER_SHELL_HOOK_WINDOW *PREGISTER_SHELL_HOOK_WINDOW;
 
 /**
  A prototype for the SetClipboardData function.
@@ -4066,6 +5933,11 @@ typedef struct _YORI_USER32_FUNCTIONS {
     PEMPTY_CLIPBOARD pEmptyClipboard;
 
     /**
+     If it's available on the current system, a pointer to ExitWindowsEx.
+     */
+    PEXIT_WINDOWS_EX pExitWindowsEx;
+
+    /**
      If it's available on the current system, a pointer to FindWindowW.
      */
     PFIND_WINDOWW pFindWindowW;
@@ -4091,6 +5963,11 @@ typedef struct _YORI_USER32_FUNCTIONS {
     PGET_WINDOW_RECT pGetWindowRect;
 
     /**
+     If it's available on the current system, a pointer to LockWorkStation.
+     */
+    PLOCK_WORKSTATION pLockWorkStation;
+
+    /**
      If it's available on the current system, a pointer to MoveWindow.
      */
     PMOVE_WINDOW pMoveWindow;
@@ -4103,7 +5980,12 @@ typedef struct _YORI_USER32_FUNCTIONS {
     /**
      If it's available on the current system, a pointer to RegisterClipboardFormatW.
      */
-    POPEN_CLIPBOARD pRegisterClipboardFormatW;
+    PREGISTER_CLIPBOARD_FORMATW pRegisterClipboardFormatW;
+
+    /**
+     If it's available on the current system, a pointer to RegisterShellHookWindow.
+     */
+    PREGISTER_SHELL_HOOK_WINDOW pRegisterShellHookWindow;
 
     /**
      If it's available on the current system, a pointer to SetClipboardData.
@@ -4212,6 +6094,30 @@ ATTACH_VIRTUAL_DISK(HANDLE, PSECURITY_DESCRIPTOR, DWORD, DWORD, LPVOID, LPOVERLA
 typedef ATTACH_VIRTUAL_DISK *PATTACH_VIRTUAL_DISK;
 
 /**
+ A prototype for the CompactVirtualDisk function.
+ */
+typedef
+DWORD WINAPI
+COMPACT_VIRTUAL_DISK(HANDLE, DWORD, PCOMPACT_VIRTUAL_DISK_PARAMETERS, LPOVERLAPPED);
+
+/**
+ A prototype for a pointer to the CompactVirtualDisk function.
+ */
+typedef COMPACT_VIRTUAL_DISK *PCOMPACT_VIRTUAL_DISK;
+
+/**
+ A prototype for the CreateVirtualDisk function.
+ */
+typedef
+DWORD WINAPI
+CREATE_VIRTUAL_DISK(PVIRTUAL_STORAGE_TYPE, PCWSTR, DWORD, PSECURITY_DESCRIPTOR, DWORD, DWORD, LPVOID, LPOVERLAPPED, PHANDLE);
+
+/**
+ A prototype for a pointer to the CreateVirtualDisk function.
+ */
+typedef CREATE_VIRTUAL_DISK *PCREATE_VIRTUAL_DISK;
+
+/**
  A prototype for the DetachVirtualDisk function.
  */
 typedef
@@ -4224,6 +6130,42 @@ DETACH_VIRTUAL_DISK(HANDLE, DWORD, DWORD);
 typedef DETACH_VIRTUAL_DISK *PDETACH_VIRTUAL_DISK;
 
 /**
+ A prototype for the ExpandVirtualDisk function.
+ */
+typedef
+DWORD WINAPI
+EXPAND_VIRTUAL_DISK(HANDLE, DWORD, PEXPAND_VIRTUAL_DISK_PARAMETERS, LPOVERLAPPED);
+
+/**
+ A prototype for a pointer to the ExpandVirtualDisk function.
+ */
+typedef EXPAND_VIRTUAL_DISK *PEXPAND_VIRTUAL_DISK;
+
+/**
+ A prototype for the GetVirtualDiskPhysicalPath function.
+ */
+typedef
+DWORD WINAPI
+GET_VIRTUAL_DISK_PHYSICAL_PATH(HANDLE, PDWORD, LPWSTR);
+
+/**
+ A prototype for a pointer to the GetVirtualDiskPhysicalPath function.
+ */
+typedef GET_VIRTUAL_DISK_PHYSICAL_PATH *PGET_VIRTUAL_DISK_PHYSICAL_PATH;
+
+/**
+ A prototype for the MergeVirtualDisk function.
+ */
+typedef
+DWORD WINAPI
+MERGE_VIRTUAL_DISK(HANDLE, DWORD, PMERGE_VIRTUAL_DISK_PARAMETERS, LPOVERLAPPED);
+
+/**
+ A prototype for a pointer to the MergeVirtualDisk function.
+ */
+typedef MERGE_VIRTUAL_DISK *PMERGE_VIRTUAL_DISK;
+
+/**
  A prototype for the OpenVirtualDisk function.
  */
 typedef
@@ -4234,6 +6176,18 @@ OPEN_VIRTUAL_DISK(PVIRTUAL_STORAGE_TYPE, LPCWSTR, DWORD, DWORD, POPEN_VIRTUAL_DI
  A prototype for a pointer to the OpenVirtualDisk function.
  */
 typedef OPEN_VIRTUAL_DISK *POPEN_VIRTUAL_DISK;
+
+/**
+ A prototype for the ResizeVirtualDisk function.
+ */
+typedef
+DWORD WINAPI
+RESIZE_VIRTUAL_DISK(HANDLE, DWORD, PRESIZE_VIRTUAL_DISK_PARAMETERS, LPOVERLAPPED);
+
+/**
+ A prototype for a pointer to the ResizeVirtualDisk function.
+ */
+typedef RESIZE_VIRTUAL_DISK *PRESIZE_VIRTUAL_DISK;
 
 /**
  A structure containing optional function pointers to virtdisk.dll exported
@@ -4252,17 +6206,79 @@ typedef struct _YORI_VIRTDISK_FUNCTIONS {
     PATTACH_VIRTUAL_DISK pAttachVirtualDisk;
 
     /**
+     If it's available on the current system, a pointer to CompactVirtualDisk.
+     */
+    PCOMPACT_VIRTUAL_DISK pCompactVirtualDisk;
+
+    /**
+     If it's available on the current system, a pointer to CreateVirtualDisk.
+     */
+    PCREATE_VIRTUAL_DISK pCreateVirtualDisk;
+
+    /**
      If it's available on the current system, a pointer to DetachVirtualDisk.
      */
     PDETACH_VIRTUAL_DISK pDetachVirtualDisk;
+
+    /**
+     If it's available on the current system, a pointer to ExpandVirtualDisk.
+     */
+    PEXPAND_VIRTUAL_DISK pExpandVirtualDisk;
+
+    /**
+     If it's available on the current system, a pointer to GetVirtualDiskPhysicalPath.
+     */
+    PGET_VIRTUAL_DISK_PHYSICAL_PATH pGetVirtualDiskPhysicalPath;
+
+    /**
+     If it's available on the current system, a pointer to MergeVirtualDisk.
+     */
+    PMERGE_VIRTUAL_DISK pMergeVirtualDisk;
 
     /**
      If it's available on the current system, a pointer to OpenVirtualDisk.
      */
     POPEN_VIRTUAL_DISK pOpenVirtualDisk;
 
+    /**
+     If it's available on the current system, a pointer to ResizeVirtualDisk.
+     */
+    PRESIZE_VIRTUAL_DISK pResizeVirtualDisk;
+
 } YORI_VIRTDISK_FUNCTIONS, *PYORI_VIRTDISK_FUNCTIONS;
 
 extern YORI_VIRTDISK_FUNCTIONS DllVirtDisk;
+
+/**
+ A prototype for the WTSDisconnectSession function.
+ */
+typedef
+BOOL WINAPI
+WTS_DISCONNECT_SESSION(HANDLE, DWORD, BOOL);
+
+/**
+ A prototype for a pointer to the WTSDisconnectSession function.
+ */
+typedef WTS_DISCONNECT_SESSION *PWTS_DISCONNECT_SESSION;
+
+/**
+ A structure containing optional function pointers to wtsapi32.dll exported
+ functions which programs can operate without having hard dependencies on.
+ */
+typedef struct _YORI_WTSAPI32_FUNCTIONS {
+
+    /**
+     A handle to the Dll module.
+     */
+    HINSTANCE hDll;
+
+    /**
+     If it's available on the current system, a pointer to WTSDisconnectSession.
+     */
+    PWTS_DISCONNECT_SESSION pWTSDisconnectSession;
+
+} YORI_WTSAPI32_FUNCTIONS, *PYORI_WTSAPI32_FUNCTIONS;
+
+extern YORI_WTSAPI32_FUNCTIONS DllWtsApi32;
 
 // vim:sw=4:ts=4:et:

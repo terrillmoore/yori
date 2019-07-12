@@ -55,7 +55,7 @@ CHAR strPathHelpText[] =
 BOOL
 PathHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Path %i.%i\n"), PATH_VER_MAJOR, PATH_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Path %i.%02i\n"), PATH_VER_MAJOR, PATH_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -248,7 +248,7 @@ ENTRYPOINT(
                     i++;
                 }
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
-                StartArg = i;
+                StartArg = i + 1;
                 ArgumentUnderstood = TRUE;
                 break;
             }
@@ -267,7 +267,7 @@ ENTRYPOINT(
         YoriLibConstantString(&YsFormatString, FormatString);
     }
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("path: missing argument\n"));
         return EXIT_FAILURE;
     }
@@ -275,15 +275,27 @@ ENTRYPOINT(
     ZeroMemory(&PathComponents, sizeof(PathComponents));
 
     if (YoriLibUserStringToSingleFilePath(&ArgV[StartArg], UseLongPath, &PathComponents.EntirePath)) {
-        ULONG CharIndex;
+        DWORD CharIndex;
         BOOL ExtensionFound = FALSE;
         BOOL FileComponentFound = FALSE;
+        DWORD KeepTrailingSlashesBefore;
+
+        KeepTrailingSlashesBefore = 0;
+        if (UseLongPath) {
+            if (YoriLibIsPrefixedDriveLetterWithColonAndSlash(&PathComponents.EntirePath)) {
+                KeepTrailingSlashesBefore = sizeof("\\\\?\\C:\\") - 1;
+            }
+        } else {
+            if (YoriLibIsDriveLetterWithColonAndSlash(&PathComponents.EntirePath)) {
+                KeepTrailingSlashesBefore = sizeof("C:\\") - 1;
+            }
+        }
 
         //
         //  Remove any trailing slashes
         //
 
-        for (CharIndex = PathComponents.EntirePath.LengthInChars - 1; CharIndex >= 0; CharIndex--) {
+        for (CharIndex = PathComponents.EntirePath.LengthInChars - 1; CharIndex > KeepTrailingSlashesBefore; CharIndex--) {
             if (PathComponents.EntirePath.StartOfString[CharIndex] == '\\') {
                 PathComponents.EntirePath.LengthInChars--;
             } else {

@@ -102,7 +102,7 @@ CHAR strShiftHelpText[] =
 BOOL
 YsHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%02i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -122,7 +122,7 @@ YsHelp()
 BOOL
 CallHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%02i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -136,7 +136,7 @@ CallHelp()
 BOOL
 GotoHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%02i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -150,7 +150,7 @@ GotoHelp()
 BOOL
 IncludeHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%02i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -164,7 +164,7 @@ IncludeHelp()
 BOOL
 ReturnHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%02i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -178,7 +178,7 @@ ReturnHelp()
 BOOL
 ShiftHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ys %i.%02i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -466,6 +466,8 @@ YoriCmd_RETURN(
     LPTSTR ThisValue;
     BOOL PreserveVariable;
     YORI_STRING Arg;
+    YORI_STRING VariableName;
+    YORI_STRING ValueName;
 
     StartArg = 0;
 
@@ -547,6 +549,10 @@ YoriCmd_RETURN(
         YsFreeCallStack(StackLocation);
         return EXIT_FAILURE;
     }
+
+    YoriLibInitEmptyString(&VariableName);
+    YoriLibInitEmptyString(&ValueName);
+
     ThisVar = CurrentEnvironment.StartOfString;
     while (*ThisVar != '\0') {
         VarLen = _tcslen(ThisVar);
@@ -559,13 +565,16 @@ YoriCmd_RETURN(
         ThisValue = _tcschr(&ThisVar[1], '=');
         if (ThisValue != NULL) {
             ThisValue[0] = '\0';
+            VariableName.StartOfString = ThisVar;
+            VariableName.LengthInChars = (DWORD)(ThisValue - ThisVar);
+            VariableName.LengthAllocated = VariableName.LengthInChars + 1;
             for (i = StartArg + 1, PreserveVariable = FALSE; i < ArgC; i++) {
                 if (YoriLibCompareStringWithLiteralInsensitive(&ArgV[i], ThisVar) == 0) {
                     PreserveVariable = TRUE;
                 }
             }
             if (!PreserveVariable) {
-                SetEnvironmentVariable(ThisVar, NULL);
+                YoriCallSetEnvironmentVariable(&VariableName, NULL);
             }
         }
 
@@ -590,14 +599,20 @@ YoriCmd_RETURN(
         ThisValue = _tcschr(&ThisVar[1], '=');
         if (ThisValue != NULL) {
             ThisValue[0] = '\0';
+            VariableName.StartOfString = ThisVar;
+            VariableName.LengthInChars = (DWORD)(ThisValue - ThisVar);
+            VariableName.LengthAllocated = VariableName.LengthInChars + 1;
             ThisValue++;
+            ValueName.StartOfString = ThisValue;
+            ValueName.LengthInChars = VarLen - VariableName.LengthInChars - 1;
+            ValueName.LengthAllocated = ValueName.LengthInChars + 1;
             for (i = StartArg + 1, PreserveVariable = FALSE; i < ArgC; i++) {
                 if (YoriLibCompareStringWithLiteralInsensitive(&ArgV[i], ThisVar) == 0) {
                     PreserveVariable = TRUE;
                 }
             }
             if (!PreserveVariable) {
-                SetEnvironmentVariable(ThisVar, ThisValue);
+                YoriCallSetEnvironmentVariable(&VariableName, &ValueName);
             }
         }
 

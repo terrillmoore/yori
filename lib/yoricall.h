@@ -3,7 +3,7 @@
  *
  * Yori exported API for modules to call
  *
- * Copyright (c) 2017-2018 Malcolm J. Smith
+ * Copyright (c) 2017-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -36,6 +36,12 @@ YoriCallAddHistoryString(
     );
 
 BOOL
+YoriCallAddSystemAlias(
+    __in PYORI_STRING Alias,
+    __in PYORI_STRING Value
+    );
+
+BOOL
 YoriCallBuiltinRegister(
     __in PYORI_STRING BuiltinCmd,
     __in PYORI_CMD_BUILTIN CallbackFn
@@ -49,6 +55,10 @@ YoriCallBuiltinUnregister(
 
 BOOL
 YoriCallClearHistoryStrings(
+    );
+
+BOOL
+YoriCallDecrementPromptRecursionDepth(
     );
 
 BOOL
@@ -119,9 +129,18 @@ YoriCallGetNextJobId(
     );
 
 BOOL
+YoriCallGetSystemAliasStrings(
+    __out PYORI_STRING AliasStrings
+    );
+
+BOOL
 YoriCallGetYoriVersion(
     __out PDWORD MajorVersion,
     __out PDWORD MinorVersion
+    );
+
+BOOL
+YoriCallIncrementPromptRecursionDepth(
     );
 
 BOOL
@@ -134,6 +153,12 @@ YoriCallPipeJobOutput(
 BOOL
 YoriCallSetDefaultColor(
     __in WORD NewDefaultColor
+    );
+
+BOOL
+YoriCallSetEnvironmentVariable(
+    __in PYORI_STRING VariableName,
+    __in_opt PYORI_STRING Value
     );
 
 BOOL

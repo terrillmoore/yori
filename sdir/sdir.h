@@ -54,22 +54,10 @@
 //  Hacks for older compilers
 //
 
-#ifdef _ULONGLONG_
-
 /**
  If the compiler has unsigned 64 bit values, use them for file size.
  */
-typedef ULONGLONG SDIR_FILESIZE;
-
-#elif !defined(_MSC_VER) || _MSC_VER >= 900
-
-/**
- If the compiler has only has signed 64 bit values, use them for file size.
- */
-typedef LONGLONG SDIR_FILESIZE;
-#else
-#error "Compiler does not have 64 bit support"
-#endif
+typedef DWORDLONG SDIR_FILESIZE;
 
 /**
  Macro to return the file size from a large integer.
@@ -101,93 +89,15 @@ typedef struct _SDIR_FMTCHAR {
 #pragma pack(pop)
 
 /**
- Specifies a value indicating that the background and foreground colors
- should be swapped.
- */
-#define SDIR_ATTRCTRL_INVERT           0x1
-
-/**
- Specifies a value indicating that the object should not be displayed at all.
- */
-#define SDIR_ATTRCTRL_HIDE             0x2
-
-/**
- Specifies a value indicating that the search should continue along more
- criteria to determine the color.
- */
-#define SDIR_ATTRCTRL_CONTINUE         0x4
-
-/**
- Specifies a value indicating that the file's color should be used (for a
- metadata attribute.)
- */
-#define SDIR_ATTRCTRL_FILE             0x8
-
-/**
- Specifies a value indicating that the window's current background color
- should be used.
- */
-#define SDIR_ATTRCTRL_WINDOW_BG        0x10
-
-/**
- Specifies a value indicating that the window's current foreground color
- should be used.
- */
-#define SDIR_ATTRCTRL_WINDOW_FG        0x20
-
-
-/**
  If any bits here are set, the requested color will be rejected.
  */
-#define SDIR_ATTRCTRL_INVALID_METADATA ~(SDIR_ATTRCTRL_FILE|SDIR_ATTRCTRL_WINDOW_BG|SDIR_ATTRCTRL_WINDOW_FG)
+#define SDIR_ATTRCTRL_INVALID_METADATA ~(YORILIB_ATTRCTRL_FILE|YORILIB_ATTRCTRL_WINDOW_BG|YORILIB_ATTRCTRL_WINDOW_FG)
 
 /**
  Any bits set here will be ignored when applying color information into
  files.
  */
-#define SDIR_ATTRCTRL_INVALID_FILE     ~(SDIR_ATTRCTRL_INVERT|SDIR_ATTRCTRL_HIDE|SDIR_ATTRCTRL_CONTINUE|SDIR_ATTRCTRL_WINDOW_BG|SDIR_ATTRCTRL_WINDOW_FG)
-
-/**
- If any of the flags are set here (or if a color is specified) no further
- processing is performed to find color information.
- */
-#define SDIR_ATTRCTRL_TERMINATE_MASK   (SDIR_ATTRCTRL_HIDE)
-
-/**
- Specifies the set of bits that correspond to a full color, comprising of both
- a foreground and background.
- */
-#define SDIR_ATTRIBUTE_FULLCOLOR_MASK   0xFF
-
-/**
- Specifies the set of bits that correspond to a single color.  After applying
- shifts, this could refer to either a foreground and background color.
- */
-#define SDIR_ATTRIBUTE_ONECOLOR_MASK    0x0F
-
-/**
- Specifies a pointer to a function which can be used to disable Wow64
- redirection.
- */
-typedef BOOL (WINAPI * DISABLE_WOW_REDIRECT_FN)(PVOID*);
-
-/**
- Specifies a pointer to a function which can return version information about
- executable files.
- */
-typedef BOOL  (WINAPI * GET_FILE_VERSION_INFO_FN)(LPTSTR, DWORD, DWORD, LPVOID);
-
-/**
- Specifies a pointer to a function which can return the size of version
- information about executable files.
- */
-typedef DWORD (WINAPI * GET_FILE_VERSION_INFO_SIZE_FN)(LPTSTR, LPDWORD);
-
-/**
- Specifies a pointer to a function which can return individual attributes
- from version information about executable files.
- */
-typedef BOOL  (WINAPI * VER_QUERY_VALUE_FN)(const LPVOID, LPTSTR, LPVOID *, PUINT);
+#define SDIR_ATTRCTRL_INVALID_FILE     ~(YORILIB_ATTRCTRL_INVERT|YORILIB_ATTRCTRL_HIDE|YORILIB_ATTRCTRL_CONTINUE|YORILIB_ATTRCTRL_WINDOW_BG|YORILIB_ATTRCTRL_WINDOW_FG)
 
 /**
  Specifies a pointer to a function which can return the amount of characters
@@ -299,8 +209,6 @@ typedef struct _SDIR_FEATURE {
  */
 typedef SDIR_FEATURE CONST *PCSDIR_FEATURE;
 
-extern YORILIB_ATTRIBUTE_COLOR_STRING ColorString[];
-
 #pragma pack(push, 4)
 
 /**
@@ -312,23 +220,13 @@ typedef struct _SDIR_OPTS {
      Points to a user supplied string indicating file criteria to display
      with different colors.
      */
-    LPTSTR          CustomFileColor;
-
-    /**
-     The length, in characters, of CustomFileColor.
-     */
-    DWORD           CustomFileColorLength;
-
-    /**
-     Specifies the length, in characters, of CustomFileFilter.
-     */
-    DWORD           CustomFileFilterLength;
+    YORI_STRING     CustomFileColor;
 
     /**
      Points to a user supplied string indicating file criteria to not
      display.
      */
-    LPTSTR          CustomFileFilter;
+    YORI_STRING     CustomFileFilter;
 
     /**
      Specifies the name of the directory that is currently being enumerated.
@@ -337,22 +235,10 @@ typedef struct _SDIR_OPTS {
     YORI_STRING     ParentName;
 
     /**
-     Specifies the amount of space that must be used within a subtree before
-     it should be displayed in brief recurse mode.
-     */
-    SDIR_FILESIZE   BriefRecurseSize;
-
-    /**
      TRUE if any specification should be recursively enumerated, or
      FALSE to only display a single level.
      */
     BOOL            Recursive;
-
-    /**
-     Specifies the number of levels of depth that the user wants to display
-     in brief recurse mode.
-     */
-    DWORD           BriefRecurseDepth;
 
     /**
      Specifies the effective height of the console window, in characters.
@@ -406,12 +292,6 @@ typedef struct _SDIR_OPTS {
      The volatile configuration for an executable's architecture.
      */
     SDIR_FEATURE    FtArch;
-
-    /**
-     The volatile configuration for how to display alternate lines in brief
-     recurse mode.
-     */
-    SDIR_FEATURE    FtBriefAlternate;
 
     /**
      The volatile configuration for the file's compression algorithm.
@@ -565,13 +445,6 @@ typedef struct _SDIR_OPTS {
     SDIR_FEATURE    FtWriteTime;
 
     /**
-     TRUE if when calculating file usage in directories in brief recurse
-     mode, the file size divided by link count should be used rather than
-     the raw file size (so that the file size is only counted once per disk.)
-     */
-    BOOLEAN         EnableAverageLinkSize:1;
-
-    /**
      TRUE if once the screen is full of output, the program should wait for
      the user to press a key before generating more.
      */
@@ -647,8 +520,7 @@ typedef struct _SDIR_OPTS {
 
 /**
  Summary information.  This is used to display the final line after
- enumerating a single directory, and also to calculate changes when
- enumerating across multiple directories in a brief recurse mode.
+ enumerating a single directory.
  */
 typedef struct _SDIR_SUMMARY {
     /**
@@ -769,46 +641,29 @@ typedef struct _SDIR_EXEC {
 #pragma pack(pop)
 
 /**
- An in memory representation of a single match criteria, specifying the color
- to apply in event that the incoming file matches a specified criteria.
+ A structure containing state that is global for each instance of sdir.
  */
-typedef struct _SDIR_ATTRIBUTE_APPLY {
+typedef struct _SDIR_GLOBAL {
 
     /**
-     Pointer to a function to compare an incoming directory entry against the
-     dummy one contained here.
+     An array of structures describing the criteria to use when applying
+     colors to files.
      */
-    SDIR_COMPARE_FN CompareFn;
+    YORI_LIB_FILE_FILTER FileColorCriteria;
 
     /**
-     An array indicating whether a match is found if the comparison returns
-     less than, greater than, or equal.
+     An array of structures describing the criteria to use to determine
+     which files to hide.
      */
-    BOOL TruthStates[3];
+    YORI_LIB_FILE_FILTER FileHideCriteria;
+} SDIR_GLOBAL, *PSDIR_GLOBAL;
 
-    /**
-     The color to apply in event of a match.
-     */
-    YORILIB_COLOR_ATTRIBUTES Attribute;
-
-    /**
-     Unused data to explicitly preserve alignment.
-     */
-    WORD AlignmentPadding;
-
-    /**
-     A dummy directory entry containing values to compare against.  This is
-     used to allow all compare functions to operate on two directory entries.
-     */
-    YORI_FILE_INFO CompareEntry;
-} SDIR_ATTRIBUTE_APPLY, *PSDIR_ATTRIBUTE_APPLY;
+extern SDIR_GLOBAL SdirGlobal;
 
 extern PSDIR_OPTS Opts;
 extern PSDIR_SUMMARY Summary;
 extern const SDIR_OPT SdirOptions[];
 extern const SDIR_EXEC SdirExec[];
-extern const CHAR SdirAttributeDefaultApplyString[];
-extern PSDIR_ATTRIBUTE_APPLY SdirAttributeApply;
 extern PYORI_FILE_INFO SdirDirCollection;
 extern PYORI_FILE_INFO * SdirDirSorted;
 extern DWORD SdirWriteStringLinesDisplayed;

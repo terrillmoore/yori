@@ -43,7 +43,7 @@ CHAR strHelpHelpText[] =
 BOOL
 HelpHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Help %i.%i\n"), HELP_VER_MAJOR, HELP_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Help %i.%02i\n"), HELP_VER_MAJOR, HELP_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -77,16 +77,9 @@ CHAR strHelpHelpText1[] =
         "DATE      Outputs the system date and time in a specified format\n"
         "DF        Display disk free space\n"
         "DIR       Enumerate the contents of directories in a traditional way\n"
+        "DU        Display disk space used within a directory tree\n"
         "ECHO      Outputs text\n"
-        "ENDLOCAL  Pop a previous saved environment from the stack (only valid after\n"
-        "            SETLOCAL)\n"
-        "ERASE     Delete one or more files\n"
-        "EXIT      Exits the shell\n"
-        "EXPR      Evaluate simple arithmetic expressions\n"
-        "FALSE     Return false\n"
-        "FINFO     Output information about file metadata\n"
-        "FG        Display the output of a background job in the foreground\n"
-        "FOR       Enumerates through a list of strings or files\n"
+        "ENV       Set environment variables and launch a program\n"
         ;
 
 /**
@@ -94,10 +87,21 @@ CHAR strHelpHelpText1[] =
  */
 const
 CHAR strHelpHelpText2[] =
+        "ENDLOCAL  Pop a previous saved environment from the stack (only valid after\n"
+        "            SETLOCAL)\n"
+        "ERASE     Delete one or more files\n"
+        "ERR       Display the text for a Windows error code\n"
+        "EXIT      Exits the shell\n"
+        "EXPR      Evaluate simple arithmetic expressions\n"
+        "FALSE     Return false\n"
+        "FINFO     Output information about file metadata\n"
+        "FG        Display the output of a background job in the foreground\n"
+        "FOR       Enumerates through a list of strings or files\n"
         "FSCMP     Test for file system conditions\n"
         "GET       Fetches objects from HTTP and stores them in local files\n"
         "GRPCMP    Returns true if the user is a member of the specified group\n"
         "GOTO      Goto a label in a script\n"
+        "HASH      Calculates the hash of a file or set of files\n"
         "HELP      Displays this help text\n"
         "HEXDUMP   Display a stream of data as hex\n"
         "HILITE    Output the contents of one or more files with highlight on lines\n"
@@ -109,7 +113,15 @@ CHAR strHelpHelpText2[] =
         "INTCMP    Compare two integer values\n"
         "JOB       Displays or updates background job status\n"
         "LINES     Count the number of lines in one or more files\n"
+        ;
+
+/**
+ More text to display to the user about Yori and its tools.
+ */
+const
+CHAR strHelpHelpText3[] =
         "LSOF      Display which processes have a file in use\n"
+        "MEM       Display memory usage information\n"
         "MKDIR     Creates directories\n"
         "MKLINK    Creates hardlinks, symbolic links, or junctions\n"
         "MORE      Displays text one page at a time with scrolling\n"
@@ -121,16 +133,10 @@ CHAR strHelpHelpText2[] =
         "PAUSE     Prompt the user to press any key before continuing\n"
         "POPD      Pop a previous current directory from the stack (only valid after\n"
         "            PUSHD)\n"
+        "PS        Display a list of processes in the system\n"
         "PUSHD     Push the current directory onto a stack and change to a new directory\n"
         "READLINE  Inputs a line and sends it to output\n"
         "REM       Ignore command\n"
-        ;
-
-/**
- More text to display to the user about Yori and its tools.
- */
-const
-CHAR strHelpHelpText3[] =
         "RETURN    Return from a subroutine (only valid after CALL)\n"
         "RMDIR     Removes directories\n"
         "SCUT      Create, modify, display or execute Windows shortcuts\n"
@@ -139,14 +145,24 @@ CHAR strHelpHelpText3[] =
         "SETLOCAL  Push the current directory and environment onto a saved stack\n"
         "SETVER    Lie about Windows version and launch a program\n"
         "SHIFT     Shift command arguments left by one (only valid in scripts)\n"
+        ;
+
+/**
+ More text to display to the user about Yori and its tools.
+ */
+const
+CHAR strHelpHelpText4[] =
+        "SHUTDN    Shutdown, reboot or logoff the system\n"
         "SLEEP     Waits for a specified number of seconds\n"
         "SPLIT     Split a file into pieces\n"
+        "SPONGE    Read input into memory then output, allowing rewrite of input\n"
         "START     Ask the shell to open a file\n"
         "STRCMP    Compare two strings\n"
         "SYNC      Flush a file, directory or volume\n"
         "TAIL      Output the final lines of one or more files\n"
         "TEE       Output the contents of standard input to standard output and a file\n"
-        "TITLE     Set the console window title\n"
+        "TIMETHIS  Time how long a program takes to execute\n"
+        "TITLE     Get or set the console window title\n"
         "TOUCH     Create a file or update its timestamps\n"
         "TRUE      Returns true\n"
         "TYPE      Output the contents of one or more files\n"
@@ -170,7 +186,8 @@ HelpText()
 {
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%hs"), strHelpHelpText1);
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%hs"), strHelpHelpText2);
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%hs\n"), strHelpHelpText3);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%hs"), strHelpHelpText3);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("%hs\n"), strHelpHelpText4);
     return TRUE;
 }
 

@@ -55,7 +55,7 @@ CHAR strFsCmpHelpText[] =
 BOOL
 FsCmpHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("FsCmp %i.%i\n"), FSCMP_VER_MAJOR, FSCMP_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("FsCmp %i.%02i\n"), FSCMP_VER_MAJOR, FSCMP_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -248,6 +248,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("l")) == 0) {
                 FsCmpContext.TestType = FsCmpTestTypeLinkExists;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                ArgumentUnderstood = TRUE;
+                StartArg = i + 1;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -260,7 +264,7 @@ ENTRYPOINT(
         }
     }
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("fscmp: missing argument\n"));
         goto cleanup_and_exit;
     }
@@ -276,7 +280,7 @@ ENTRYPOINT(
     }
 
     for (i = StartArg; i < ArgC && !FsCmpContext.ConditionMet; i++) {
-        YoriLibForEachFile(&ArgV[i], MatchFlags, 0, FsCmpFileFoundCallback, &FsCmpContext);
+        YoriLibForEachFile(&ArgV[i], MatchFlags, 0, FsCmpFileFoundCallback, NULL, &FsCmpContext);
     }
 
 cleanup_and_exit:

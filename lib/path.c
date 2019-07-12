@@ -498,12 +498,17 @@ YoriLibLocateFileExtensionsInOnePath(
     //  Normally we'd build the search path, a seperator, and the file
     //  criteria.  If the search path is just an X: prefix though, we
     //  really don't want to add the seperator, which would completely
-    //  change the meaning of the request.
+    //  change the meaning of the request.  If the search path ends in
+    //  a seperator already, don't add another.
     //
 
     NeedsSeperator = TRUE;
     if (SearchPath->LengthInChars == 2 &&
         SearchPath->StartOfString[1] == ':') {
+
+        NeedsSeperator = FALSE;
+    } else if (SearchPath->LengthInChars > 0 &&
+               YoriLibIsSep(SearchPath->StartOfString[SearchPath->LengthInChars - 1])) {
 
         NeedsSeperator = FALSE;
     }
@@ -832,12 +837,23 @@ YoriLibPathLocateUnknownExtensionKnownLocation(
             FileNameToFind.LengthInChars = DirectoryToSearch.LengthInChars - PathSeperator - 1;
 
             //
-            //  If the seperator is a slash, remove it.  If it's a colon,
+            //  If the seperator is a slash, and it's in the middle of a
+            //  path specification, remove it.  If the seperator is a slash
+            //  but it indicates the root of a drive, or if it's a colon,
             //  retain it.
             //
 
             if (YoriLibIsSep(DirectoryToSearch.StartOfString[PathSeperator])) {
-                DirectoryToSearch.LengthInChars = PathSeperator;
+                if (PathSeperator == 2 &&
+                    YoriLibIsDriveLetterWithColonAndSlash(&DirectoryToSearch)) {
+
+                    DirectoryToSearch.LengthInChars = PathSeperator + 1;
+                } else if (PathSeperator == 6 &&
+                           YoriLibIsPrefixedDriveLetterWithColonAndSlash(&DirectoryToSearch)) {
+                    DirectoryToSearch.LengthInChars = PathSeperator + 1;
+                } else {
+                    DirectoryToSearch.LengthInChars = PathSeperator;
+                }
             } else {
                 DirectoryToSearch.LengthInChars = PathSeperator + 1;
             }
@@ -1098,234 +1114,6 @@ YoriLibLocateExecutableInPath(
         memcpy(PathName, &FoundPath, sizeof(YORI_STRING));
         ASSERT(YoriLibIsStringNullTerminated(PathName));
     }
-    return TRUE;
-}
-
-/**
- Add a a new component to a semicolon delimited string.  This routine assumes
- the caller has allocated enough space in ExistingString to hold the result.
- That is, ExistingString must be large enough to hold itself, plus a seperator,
- plus NewComponent, plus a NULL terminator.
-
- @param ExistingString Pointer to the existing string.  On successful
-        completion, this is modified to contain the new string.
-
- @param NewComponent Pointer to the component to add to the existing string if
-        it is not already there.
-
- @param InsertAtFront If TRUE, the new component is added before existing
-        contents; if FALSE, it is added after existing contents.
-
- @return TRUE if the buffer was modified, FALSE if it was not.
- */
-BOOL
-YoriLibAddEnvironmentComponentToString(
-    __inout PYORI_STRING ExistingString,
-    __in PYORI_STRING NewComponent,
-    __in BOOL InsertAtFront
-    )
-{
-    LPTSTR ThisPath;
-    TCHAR * TokCtx;
-
-    ASSERT(ExistingString->LengthAllocated >= ExistingString->LengthInChars + 1 + NewComponent->LengthInChars + 1);
-
-    if (ExistingString->LengthAllocated < ExistingString->LengthInChars + 1 + NewComponent->LengthInChars + 1) {
-        return FALSE;
-    }
-
-
-    ThisPath = _tcstok_s(ExistingString->StartOfString, _T(";"), &TokCtx);
-    while (ThisPath != NULL) {
-        if (ThisPath[0] != '\0') {
-            if (YoriLibCompareStringWithLiteralInsensitive(NewComponent, ThisPath) == 0) {
-                if (TokCtx != NULL) {
-                    TokCtx--;
-                    ASSERT(*TokCtx == '\0');
-                    *TokCtx = ';';
-                }
-                return FALSE;
-            }
-        }
-        if (TokCtx != NULL) {
-            TokCtx--;
-            ASSERT(*TokCtx == '\0');
-            *TokCtx = ';';
-            TokCtx++;
-        }
-        ThisPath = _tcstok_s(NULL, _T(";"), &TokCtx);
-    }
-
-    //
-    //  If it currently ends in a semicolon, back up one char
-    //  so we don't add another
-    //
-
-    if (ExistingString->LengthInChars > 0 &&
-        ExistingString->StartOfString[ExistingString->LengthInChars - 1] == ';') {
-        ExistingString->LengthInChars--;
-    }
-
-    if (InsertAtFront) {
-
-        //
-        //  Move the existing contents back to after the new string plus a
-        //  seperator, if any existing contents exist.  After inserting the
-        //  new string, either add the seperator or terminate, depending
-        //  on whether there were contents previously.
-        //
-
-        if (ExistingString->LengthInChars > 0) {
-            memmove(&ExistingString->StartOfString[NewComponent->LengthInChars + 1],
-                    ExistingString->StartOfString,
-                    ExistingString->LengthInChars * sizeof(TCHAR));
-            ExistingString->StartOfString[NewComponent->LengthInChars + 1 + ExistingString->LengthInChars] = '\0';
-        }
-        memcpy(ExistingString->StartOfString, NewComponent->StartOfString, NewComponent->LengthInChars * sizeof(TCHAR));
-        if (ExistingString->LengthInChars > 0) {
-            ExistingString->StartOfString[NewComponent->LengthInChars] = ';';
-            ExistingString->LengthInChars += NewComponent->LengthInChars + 1;
-        } else {
-            ExistingString->StartOfString[NewComponent->LengthInChars] = '\0';
-            ExistingString->LengthInChars = NewComponent->LengthInChars;
-        }
-    } else {
-
-        //
-        //  Copy the new path at the end of the previous one.  If it has any
-        //  contents, add a seperator.
-        //
-
-        if (ExistingString->LengthInChars > 0) {
-            ExistingString->StartOfString[ExistingString->LengthInChars] = ';';
-            ExistingString->LengthInChars++;
-        }
-        memcpy(&ExistingString->StartOfString[ExistingString->LengthInChars], NewComponent->StartOfString, NewComponent->LengthInChars * sizeof(TCHAR));
-        ExistingString->LengthInChars += NewComponent->LengthInChars;
-        ExistingString->StartOfString[ExistingString->LengthInChars] = '\0';
-    }
-    return TRUE;
-}
-
-/**
- Add a component to a semicolon delimited environment variable if it's not
- already there.
-
- @param EnvironmentVariable The environment variable to update.
-
- @param NewComponent The component to add.
-
- @param InsertAtFront If TRUE, insert the new component at the front of the
-        list.  If FALSE, add the component to the end of the list.
-
- @return TRUE to indicate success, FALSE on failure.
- */
-BOOL
-YoriLibAddEnvironmentComponent(
-    __in LPTSTR EnvironmentVariable,
-    __in PYORI_STRING NewComponent,
-    __in BOOL InsertAtFront
-    )
-{
-    YORI_STRING EnvData;
-    DWORD EnvVarLength;
-
-    //
-    //  The contents of the environment variable.  Allocate enough
-    //  space to append the specified directory in case we need to.
-    //
-
-    EnvVarLength = GetEnvironmentVariable(EnvironmentVariable, NULL, 0);
-    if (!YoriLibAllocateString(&EnvData, EnvVarLength + 1 + NewComponent->LengthInChars + 1)) {
-        return FALSE;
-    }
-
-    EnvData.StartOfString[0] = '\0';
-    EnvData.LengthInChars = GetEnvironmentVariable(EnvironmentVariable, EnvData.StartOfString, EnvData.LengthAllocated);
-
-    if (!YoriLibAddEnvironmentComponentToString(&EnvData, NewComponent, InsertAtFront)) {
-        YoriLibFreeStringContents(&EnvData);
-        return TRUE;
-    }
-
-
-    if (!SetEnvironmentVariable(EnvironmentVariable, EnvData.StartOfString)) {
-        YoriLibFreeStringContents(&EnvData);
-        return FALSE;
-    }
-    
-    YoriLibFreeStringContents(&EnvData);
-    return TRUE;
-}
-
-/**
- Remove a component from a semicolon delimited environment variable if it's
- already there.
-
- @param EnvironmentVariable The environment variable to update.
-
- @param ComponentToRemove The component to remove.
-
- @return TRUE to indicate success, FALSE on failure.
- */
-BOOL
-YoriLibRemoveEnvironmentComponent(
-    __in LPTSTR EnvironmentVariable,
-    __in PYORI_STRING ComponentToRemove
-    )
-{
-    LPTSTR PathData;
-    LPTSTR NewPathData;
-    LPTSTR ThisPath;
-    TCHAR * TokCtx;
-    DWORD PathLength;
-    DWORD NewOffset;
-    DWORD CharsPopulated;
-
-    //
-    //  The contents of the environment variable.  Allocate enough
-    //  space to append the specified directory in case we need to.
-    //
-
-    PathLength = GetEnvironmentVariable(EnvironmentVariable, NULL, 0);
-    PathData = YoriLibMalloc(PathLength * 2 * sizeof(TCHAR));
-    if (PathData == NULL) {
-        return FALSE;
-    }
-
-    PathData[0] = '\0';
-    GetEnvironmentVariable(EnvironmentVariable, PathData, PathLength);
-
-    NewPathData = (LPTSTR)YoriLibAddToPointer(PathData, PathLength * sizeof(TCHAR));
-    NewOffset = 0;
-
-    ThisPath = _tcstok_s(PathData, _T(";"), &TokCtx);
-    while (ThisPath != NULL) {
-        if (ThisPath[0] != '\0') {
-            if (YoriLibCompareStringWithLiteralInsensitive(ComponentToRemove, ThisPath) != 0) {
-                if (NewOffset != 0) {
-                    CharsPopulated = YoriLibSPrintf(&NewPathData[NewOffset], _T(";%s"), ThisPath);
-                } else {
-                    CharsPopulated = YoriLibSPrintf(&NewPathData[NewOffset], _T("%s"), ThisPath);
-                }
-
-                if (CharsPopulated < 0) {
-                    YoriLibFree(PathData);
-                    return FALSE;
-                }
-                NewOffset += CharsPopulated;
-            }
-        }
-        ThisPath = _tcstok_s(NULL, _T(";"), &TokCtx);
-    }
-
-    if (!SetEnvironmentVariable(EnvironmentVariable, NewPathData)) {
-        YoriLibFree(PathData);
-        return FALSE;
-    }
-    
-    YoriLibFree(PathData);
-
     return TRUE;
 }
 

@@ -105,13 +105,9 @@ MoreProcessStream(
             }
             BufferOffset = 0;
 
-            //
-            //  MSFIX What to do on out of memory?  This tool can actually run
-            //  out
-            //
-
             Buffer = YoriLibReferencedMalloc(BytesRemainingInBuffer);
             if (Buffer == NULL) {
+                MoreContext->OutOfMemory = TRUE;
                 break;
             }
         }
@@ -225,7 +221,7 @@ MoreProcessStream(
 
  @param Depth Specifies recursion depth.  Ignored in this application.
 
- @param MoreContext Pointer to the more context structure indicating the
+ @param Context Pointer to the more context structure indicating the
         action to perform and populated with the file and line count found.
 
  @return TRUE to continute enumerating, FALSE to abort.
@@ -235,10 +231,11 @@ MoreFileFoundCallback(
     __in PYORI_STRING FilePath,
     __in PWIN32_FIND_DATA FileInfo,
     __in DWORD Depth,
-    __in PMORE_CONTEXT MoreContext
+    __in PVOID Context
     )
 {
     HANDLE FileHandle;
+    PMORE_CONTEXT MoreContext = (PMORE_CONTEXT)Context;
 
     UNREFERENCED_PARAMETER(Depth);
 
@@ -270,6 +267,9 @@ MoreFileFoundCallback(
         CloseHandle(FileHandle);
     }
 
+    if (MoreContext->OutOfMemory) {
+        return FALSE;
+    }
     return TRUE;
 }
 
@@ -297,9 +297,7 @@ MoreIngestThread(
     //
 
     if (MoreContext->InputSourceCount == 0) {
-        DWORD FileMore = GetFileType(GetStdHandle(STD_INPUT_HANDLE));
-        FileMore = FileMore & ~(FILE_TYPE_REMOTE);
-        if (FileMore == FILE_TYPE_CHAR) {
+        if (YoriLibIsStdInConsole()) {
             YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("No file or pipe for input\n"));
             return 0;
         }
@@ -316,7 +314,7 @@ MoreIngestThread(
     
         for (i = 0; i < MoreContext->InputSourceCount; i++) {
     
-            YoriLibForEachFile(&MoreContext->InputSources[i], MatchFlags, 0, MoreFileFoundCallback, MoreContext);
+            YoriLibForEachStream(&MoreContext->InputSources[i], MatchFlags, 0, MoreFileFoundCallback, NULL, MoreContext);
         }
     }
 

@@ -56,6 +56,9 @@ YoriShIsEnvironmentVariableChar(
 
  @param Size The length of the Variable parameter, in characters.
 
+ @param Generation Optionally points to a location to populate with the
+        generation of the environment at the time of the query.
+
  @return The number of characters copied (without NULL), of if the buffer
          is too small, the number of characters needed (including NULL.)
  */
@@ -63,7 +66,8 @@ DWORD
 YoriShGetEnvironmentVariableWithoutSubstitution(
     __in LPCTSTR Name,
     __out_opt LPTSTR Variable,
-    __in DWORD Size
+    __in DWORD Size,
+    __out_opt PDWORD Generation
     )
 {
     DWORD Length;
@@ -77,20 +81,31 @@ YoriShGetEnvironmentVariableWithoutSubstitution(
         Length = GetCurrentDirectory(Size, Variable);
     } else if (tcsicmp(Name, _T("ERRORLEVEL")) == 0) {
         if (Variable != NULL) {
-            Length = YoriLibSPrintfS(Variable, Size, _T("%i"), g_ErrorLevel);
+            Length = YoriLibSPrintfS(Variable, Size, _T("%i"), YoriShGlobal.ErrorLevel);
         } else {
-            Length = YoriLibSPrintfS(NumString, sizeof(NumString)/sizeof(NumString[0]), _T("%i"), g_ErrorLevel);
+            Length = YoriLibSPrintfS(NumString, sizeof(NumString)/sizeof(NumString[0]), _T("%i"), YoriShGlobal.ErrorLevel);
             Length++;
         }
     } else if (tcsicmp(Name, _T("LASTJOB")) == 0) {
         if (Variable != NULL) {
-            Length = YoriLibSPrintfS(Variable, Size, _T("%i"), g_PreviousJobId);
+            Length = YoriLibSPrintfS(Variable, Size, _T("%i"), YoriShGlobal.PreviousJobId);
         } else {
-            Length = YoriLibSPrintfS(NumString, sizeof(NumString)/sizeof(NumString[0]), _T("%i"), g_PreviousJobId);
+            Length = YoriLibSPrintfS(NumString, sizeof(NumString)/sizeof(NumString[0]), _T("%i"), YoriShGlobal.PreviousJobId);
+            Length++;
+        }
+    } else if (tcsicmp(Name, _T("YORIPID")) == 0) {
+        if (Variable != NULL) {
+            Length = YoriLibSPrintfS(Variable, Size, _T("0x%x"), GetCurrentProcessId());
+        } else {
+            Length = YoriLibSPrintfS(NumString, sizeof(NumString)/sizeof(NumString[0]), _T("0x%x"), GetCurrentProcessId());
             Length++;
         }
     } else {
         Length = GetEnvironmentVariable(Name, Variable, Size);
+    }
+
+    if (Generation != NULL) {
+        *Generation = YoriShGlobal.EnvironmentGeneration;
     }
 
     return Length;
@@ -111,6 +126,9 @@ YoriShGetEnvironmentVariableWithoutSubstitution(
         characters copied (without NULL), or if the buffer is too small, the
         number of characters needed (including NULL.)
 
+ @param Generation Optionally points to a location to populate with the
+        generation of the environment at the time of the query.
+
  @return TRUE to indicate success, FALSE to indicate failure.
  */
 BOOL
@@ -118,7 +136,8 @@ YoriShGetEnvironmentVariable(
     __in LPCTSTR Name,
     __out_opt LPTSTR Variable,
     __in DWORD Size,
-    __out PDWORD ReturnedSize
+    __out PDWORD ReturnedSize,
+    __out_opt PDWORD Generation
     )
 {
     DWORD DataLength;
@@ -137,7 +156,7 @@ YoriShGetEnvironmentVariable(
 
     ColonPtr = _tcschr(Name, ':');
     if (ColonPtr == NULL) {
-        DataLength = YoriShGetEnvironmentVariableWithoutSubstitution(Name, Variable, Size);
+        DataLength = YoriShGetEnvironmentVariableWithoutSubstitution(Name, Variable, Size, Generation);
         if (DataLength == 0) {
             return FALSE;
         }
@@ -172,7 +191,7 @@ YoriShGetEnvironmentVariable(
     }
 
     DataVariable = NULL;
-    DataLength = YoriShGetEnvironmentVariableWithoutSubstitution(RawName, NULL, 0);
+    DataLength = YoriShGetEnvironmentVariableWithoutSubstitution(RawName, NULL, 0, Generation);
     if (DataLength == 0) {
         YoriLibFree(RawName);
         return FALSE;
@@ -191,7 +210,7 @@ YoriShGetEnvironmentVariable(
             return FALSE;
         }
 
-        FinalDataLength = YoriShGetEnvironmentVariableWithoutSubstitution(RawName, DataVariable, DataLength);
+        FinalDataLength = YoriShGetEnvironmentVariableWithoutSubstitution(RawName, DataVariable, DataLength, NULL);
 
         if (FinalDataLength >= DataLength || FinalDataLength == 0) {
             YoriLibFree(RawName);
@@ -349,7 +368,7 @@ YoriShGetEnvironmentVariable(
             ProcessedLength = CurrentOffset + 1;
         }
     } else {
-        ProcessedLength = YoriShGetEnvironmentVariableWithoutSubstitution(Name, Variable, Size);
+        ProcessedLength = YoriShGetEnvironmentVariableWithoutSubstitution(Name, Variable, Size, NULL);
     }
 
     if (DataVariable != NULL) {
@@ -370,17 +389,25 @@ YoriShGetEnvironmentVariable(
  @param Value On successful completion, populated with a newly allocated
         string containing the environment variable's contents.
 
+ @param Generation Optionally points to a location to populate with the
+        generation of the environment at the time of the query.
+
  @return TRUE to indicate success, FALSE to indicate failure.
  */
 BOOL
 YoriShAllocateAndGetEnvironmentVariable(
     __in LPCTSTR Name,
-    __out PYORI_STRING Value
+    __out PYORI_STRING Value,
+    __out_opt PDWORD Generation
     )
 {
     DWORD LengthNeeded;
 
-    if (!YoriShGetEnvironmentVariable(Name, NULL, 0, &LengthNeeded)) {
+    if (Generation != NULL) {
+        *Generation = YoriShGlobal.EnvironmentGeneration;
+    }
+
+    if (!YoriShGetEnvironmentVariable(Name, NULL, 0, &LengthNeeded, NULL)) {
         YoriLibInitEmptyString(Value);
         return TRUE;
     }
@@ -389,7 +416,7 @@ YoriShAllocateAndGetEnvironmentVariable(
         return FALSE;
     }
 
-    if (!YoriShGetEnvironmentVariable(Name, Value->StartOfString, Value->LengthAllocated, &Value->LengthInChars) ||
+    if (!YoriShGetEnvironmentVariable(Name, Value->StartOfString, Value->LengthAllocated, &Value->LengthInChars, NULL) ||
         Value->LengthInChars >= Value->LengthAllocated) {
 
         YoriLibFreeStringContents(Value);
@@ -437,7 +464,7 @@ YoriShGetEnvironmentExpandedText(
         return FALSE;
     }
 
-    if (!YoriShGetEnvironmentVariable(EnvVarName, Result->StartOfString, Result->LengthAllocated, &EnvVarCopied)) {
+    if (!YoriShGetEnvironmentVariable(EnvVarName, Result->StartOfString, Result->LengthAllocated, &EnvVarCopied, NULL)) {
 
         if (Result->LengthAllocated > 2 + Name->LengthInChars) {
             Result->LengthInChars = YoriLibSPrintf(Result->StartOfString, _T("%c%y%c"), Seperator, Name, Seperator);
@@ -637,6 +664,143 @@ YoriShExpandEnvironmentVariables(
     return TRUE;
 }
 
+/**
+ Set an environment variable in the Yori shell process.
+
+ @param VariableName The variable name to set.
+
+ @param Value Pointer to the value to set.  If NULL, the variable is deleted.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriShSetEnvironmentVariable(
+    __in PYORI_STRING VariableName,
+    __in_opt PYORI_STRING Value
+    )
+{
+    LPTSTR NullTerminatedVariable;
+    LPTSTR NullTerminatedValue;
+    BOOL AllocatedVariable;
+    BOOL AllocatedValue;
+    BOOL Result;
+
+    if (YoriLibIsStringNullTerminated(VariableName)) {
+        NullTerminatedVariable = VariableName->StartOfString;
+        AllocatedVariable = FALSE;
+    } else {
+        NullTerminatedVariable = YoriLibCStringFromYoriString(VariableName);
+        if (NullTerminatedVariable == NULL) {
+            return FALSE;
+        }
+        AllocatedVariable = TRUE;
+    }
+
+    if (Value == NULL) {
+        NullTerminatedValue = NULL;
+        AllocatedValue = FALSE;
+    } else if (YoriLibIsStringNullTerminated(Value)) {
+        NullTerminatedValue = Value->StartOfString;
+        AllocatedValue = FALSE;
+    } else {
+        NullTerminatedValue = YoriLibCStringFromYoriString(Value);
+        if (NullTerminatedValue == NULL) {
+            if (AllocatedVariable) {
+                YoriLibDereference(NullTerminatedVariable);
+            }
+            return FALSE;
+        }
+        AllocatedValue = TRUE;
+    }
+
+    ASSERT(!AllocatedVariable && !AllocatedValue);
+
+    Result = SetEnvironmentVariable(NullTerminatedVariable, NullTerminatedValue);
+    YoriShGlobal.EnvironmentGeneration++;
+
+    if (AllocatedVariable) {
+        YoriLibDereference(NullTerminatedVariable);
+    }
+    if (AllocatedValue) {
+        YoriLibDereference(NullTerminatedValue);
+    }
+
+    return Result;
+}
+
+/**
+ Apply an environment block into the running process.  Variables not explicitly
+ included in this block are discarded.
+
+ @param NewEnv Pointer to the new environment block to apply.
+
+ @return TRUE to indicate success, FALSE to indicate failure.
+ */
+BOOL
+YoriShSetEnvironmentStrings(
+    __in PYORI_STRING NewEnv
+    )
+{
+    YORI_STRING CurrentEnvironment;
+    LPTSTR ThisVar;
+    LPTSTR ThisValue;
+    DWORD VarLen;
+
+    //
+    //  Query the current environment and delete everything in it.
+    //
+
+    if (!YoriLibGetEnvironmentStrings(&CurrentEnvironment)) {
+        return FALSE;
+    }
+    ThisVar = CurrentEnvironment.StartOfString;
+    while (*ThisVar != '\0') {
+        VarLen = _tcslen(ThisVar);
+
+        //
+        //  We know there's at least one char.  Skip it if it's equals since
+        //  that's how drive current directories are recorded.
+        //
+
+        ThisValue = _tcschr(&ThisVar[1], '=');
+        if (ThisValue != NULL) {
+            ThisValue[0] = '\0';
+            SetEnvironmentVariable(ThisVar, NULL);
+        }
+
+        ThisVar += VarLen;
+        ThisVar++;
+    }
+    YoriLibFreeStringContents(&CurrentEnvironment);
+
+    //
+    //  Now load the new environment.
+    //
+
+    ThisVar = NewEnv->StartOfString;
+    while (*ThisVar != '\0') {
+        VarLen = _tcslen(ThisVar);
+
+        //
+        //  We know there's at least one char.  Skip it if it's equals since
+        //  that's how drive current directories are recorded.
+        //
+
+        ThisValue = _tcschr(&ThisVar[1], '=');
+        if (ThisValue != NULL) {
+            ThisValue[0] = '\0';
+            ThisValue++;
+            SetEnvironmentVariable(ThisVar, ThisValue);
+        }
+
+        ThisVar += VarLen;
+        ThisVar++;
+    }
+
+    YoriShGlobal.EnvironmentGeneration++;
+
+    return TRUE;
+}
 
 
 // vim:sw=4:ts=4:et:

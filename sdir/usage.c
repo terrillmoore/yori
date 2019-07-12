@@ -52,7 +52,7 @@ SdirUsageVersionInfo()
 
     YoriLibSPrintfS(Line,
                 sizeof(Line)/sizeof(Line[0]),
-                _T("Sdir version %i.%i, compiled %hs\n"),
+                _T("Sdir version %i.%02i, compiled %hs\n"),
                 SDIR_VER_MAJOR,
                 SDIR_VER_MINOR,
                 __DATE__
@@ -204,9 +204,6 @@ CHAR strCmdLineOpts[] =
                    "\n"
                    "   -?           Display help\n"
                    "\n"
-                   "   -al/-aln     Average size per hard link in summary\n"
-                   "   -br[num]     Brief recurse, limit depth to num\n"
-                   "   -bs[size]    Brief recurse, limit size to size\n"
                    "   -cw[num]     Width of console when writing to files\n"
                    "   -fc[string]  Apply custom file color string, see file color section\n"
                    "   -fe[string]  Exclude files matching criteria, see file color section\n"
@@ -394,10 +391,10 @@ const
 CHAR strFileColorUsage1[] = 
                    " Color coding for files is defined via three environment variables,\n"
                    " plus the command line, processed in order:\n"
-                   "   SDIR_COLOR_PREPEND, processed first\n"
+                   "   YORICOLORPREPEND, processed first\n"
                    "   Command line -fc options, processed next\n"
-                   "   SDIR_COLOR_REPLACE, if defined; otherwise, built in defaults apply\n"
-                   "   SDIR_COLOR_APPEND, processed last\n"
+                   "   YORICOLORREPLACE, if defined; otherwise, built in defaults apply\n"
+                   "   YORICOLORAPPEND, processed last\n"
                    "\n"
                    " Each variable contains a semicolon delimited list of rules.  Each rule takes\n"
                    " the form of:\n"
@@ -509,7 +506,7 @@ SdirUsageFileColor()
         YoriLibSPrintfS(Line,
                     sizeof(Line)/sizeof(Line[0]),
                     _T("   %-16s"),
-                    ColorString[i].String);
+                    YoriLibColorStringTable[i].String);
 
         if (i==0) {
             YoriLibSetColorToWin32(&Attr, SDIR_DEFAULT_COLOR);
@@ -522,7 +519,7 @@ SdirUsageFileColor()
         YoriLibSPrintfS(Line,
                     sizeof(Line)/sizeof(Line[0]),
                     _T(" %-16s"),
-                    ColorString[i+8].String);
+                    YoriLibColorStringTable[i+8].String);
 
         YoriLibSetColorToWin32(&Attr, (UCHAR)(i + 8));
 
@@ -531,7 +528,7 @@ SdirUsageFileColor()
         YoriLibSPrintfS(Line,
                     sizeof(Line)/sizeof(Line[0]),
                     _T(" bg_%-16s"),
-                    ColorString[i].String);
+                    YoriLibColorStringTable[i].String);
 
         YoriLibSetColorToWin32(&Attr, (UCHAR)((i<<4) + 0xF));
 
@@ -540,7 +537,7 @@ SdirUsageFileColor()
         YoriLibSPrintfS(Line,
                     sizeof(Line)/sizeof(Line[0]),
                     _T(" bg_%-16s"),
-                    ColorString[i+8].String);
+                    YoriLibColorStringTable[i+8].String);
 
         YoriLibSetColorToWin32(&Attr, (UCHAR)((i+8)<<4));
 
@@ -561,7 +558,7 @@ SdirUsageFileColor()
     //  one per line.  This is the kludge to make that happen.
     //
 
-    This = SdirAttributeDefaultApplyString;
+    This = YoriLibGetDefaultFileColorString();
 
     YoriLibSPrintfS(Line,
                 sizeof(Line)/sizeof(Line[0]),
@@ -612,7 +609,7 @@ CHAR strMetaColorHeader[] = "METADATA COLOR CODING";
  */
 const
 CHAR strMetaColorUsage1[] =
-                   " Color coding for metadata attributes is defined via SDIR_COLOR_METADATA.\n"
+                   " Color coding for metadata attributes is defined via YORICOLORMETADATA.\n"
                    " This variable also contains a semicolon delimited list of rules.  Each rule\n"
                    " takes the form of:\n"
                    "\n"

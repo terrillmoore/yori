@@ -49,7 +49,7 @@ CHAR strSyncHelpText[] =
 BOOL
 SyncHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Sync %i.%i\n"), SYNC_VER_MAJOR, SYNC_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Sync %i.%02i\n"), SYNC_VER_MAJOR, SYNC_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -293,6 +293,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("v")) == 0) {
                 SyncContext.Verbose = TRUE;
                 ArgumentUnderstood = TRUE;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                StartArg = i + 1;
+                ArgumentUnderstood = TRUE;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -309,7 +313,7 @@ ENTRYPOINT(
     //  If no file name is specified, we have nothing to flush.
     //
 
-    if (StartArg == 0) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("sync: missing argument\n"));
         return EXIT_FAILURE;
     } else {
@@ -324,7 +328,7 @@ ENTRYPOINT(
         for (i = StartArg; i < ArgC; i++) {
 
             SyncContext.FilesFoundThisArg = 0;
-            YoriLibForEachFile(&ArgV[i], MatchFlags, 0, SyncFileFoundCallback, &SyncContext);
+            YoriLibForEachStream(&ArgV[i], MatchFlags, 0, SyncFileFoundCallback, NULL, &SyncContext);
             if (SyncContext.FilesFoundThisArg == 0) {
                 YORI_STRING FullPath;
                 YoriLibInitEmptyString(&FullPath);

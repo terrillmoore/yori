@@ -51,7 +51,7 @@ CHAR strHelpText[] =
 BOOL
 YsetupHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ysetup %i.%i\n"), YSETUP_VER_MAJOR, YSETUP_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Ysetup %i.%02i\n"), YSETUP_VER_MAJOR, YSETUP_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -72,7 +72,6 @@ SetupInstallToDirectory(
     )
 {
     YORI_STRING PkgNames[4];
-    DWORD SuccessCount = 0;
 
     if (!YoriLibCreateDirectoryAndParents(InstallDirectory)) {
         DWORD Err = GetLastError();
@@ -87,8 +86,7 @@ SetupInstallToDirectory(
     YoriLibConstantString(&PkgNames[2], _T("yori-typical"));
     YoriLibConstantString(&PkgNames[3], _T("yori-completion"));
 
-    SuccessCount = YoriPkgInstallRemotePackages(PkgNames, sizeof(PkgNames)/sizeof(PkgNames[0]), InstallDirectory, NULL, NULL);
-    if (SuccessCount == 3) {
+    if (YoriPkgInstallRemotePackages(PkgNames, sizeof(PkgNames)/sizeof(PkgNames[0]), InstallDirectory, NULL, NULL)) {
         return TRUE;
     }
     return FALSE;
@@ -327,7 +325,7 @@ SetupInstallSelectedFromDialog(
         if (StatusText.StartOfString != NULL) {
             SetDlgItemText(hDlg, IDC_STATUS, StatusText.StartOfString);
         }
-        if (!YoriPkgInstallPackage(&PackageUrls[PkgCount], &InstallDir)) {
+        if (!YoriPkgInstallSinglePackage(&PackageUrls[PkgCount], &InstallDir)) {
             YoriLibYPrintf(&StatusText, _T("Failed to install %y from %y"), &PkgNames[PkgCount], &PackageUrls[PkgCount]);
             MessageBox(hDlg, StatusText.StartOfString, _T("Installation failed."), MB_ICONSTOP);
             goto Exit;
@@ -365,7 +363,7 @@ SetupInstallSelectedFromDialog(
                 MessageBox(hDlg, _T("Installation failed."), _T("Installation failed."), MB_ICONSTOP);
                 goto Exit;
             }
-            if (!YoriLibCreateShortcut(&ShortcutNameFullPath, &YoriExeFullPath, NULL, &Description, NULL, NULL, 0, 0, 0, TRUE, TRUE)) {
+            if (!YoriLibCreateShortcut(&ShortcutNameFullPath, &YoriExeFullPath, NULL, &Description, NULL, NULL, 0, 1, (WORD)-1, TRUE, TRUE)) {
                 YoriLibFreeStringContents(&YoriExeFullPath);
                 YoriLibFreeStringContents(&ShortcutNameFullPath);
                 MessageBox(hDlg, _T("Failed to create desktop shortcut."), _T("Installation failed."), MB_ICONSTOP);
@@ -382,7 +380,7 @@ SetupInstallSelectedFromDialog(
                 MessageBox(hDlg, _T("Installation failed."), _T("Installation failed."), MB_ICONSTOP);
                 goto Exit;
             }
-            if (!YoriLibCreateShortcut(&ShortcutNameFullPath, &YoriExeFullPath, NULL, &Description, NULL, NULL, 0, 0, 0, TRUE, TRUE)) {
+            if (!YoriLibCreateShortcut(&ShortcutNameFullPath, &YoriExeFullPath, NULL, &Description, NULL, NULL, 0, 1, (WORD)-1, TRUE, TRUE)) {
                 YoriLibFreeStringContents(&YoriExeFullPath);
                 YoriLibFreeStringContents(&ShortcutNameFullPath);
                 MessageBox(hDlg, _T("Failed to create start menu shortcut."), _T("Installation failed."), MB_ICONSTOP);
@@ -571,8 +569,6 @@ SetupUiDialogProc(
                         EndDialog(hDlg, TRUE);
                     }
                     return TRUE;
-                    EndDialog(hDlg, TRUE);
-                    return TRUE;
                 case IDC_CANCEL:
                     EndDialog(hDlg, FALSE);
                     return TRUE;
@@ -613,6 +609,17 @@ SetupUiDialogProc(
             rcNew.top = ((rcDesktop.bottom - rcDesktop.top) - (rcDlg.bottom - rcDlg.top)) / 2;
 
             SetWindowPos(hDlg, HWND_TOP, rcNew.left, rcNew.top, 0, 0, SWP_NOSIZE);
+
+            {
+                TCHAR Version[32];
+
+#if YORI_BUILD_ID
+                YoriLibSPrintf(Version, _T("%i.%02i.%i"), YSETUP_VER_MAJOR, YSETUP_VER_MINOR, YORI_BUILD_ID);
+#else
+                YoriLibSPrintf(Version, _T("%i.%02i"), YSETUP_VER_MAJOR, YSETUP_VER_MINOR);
+#endif
+                SetDlgItemText(hDlg, IDC_VERSION, Version);
+            }
 
             YoriLibInitEmptyString(&InstallDir);
             SetupGetDefaultInstallDir(&InstallDir);

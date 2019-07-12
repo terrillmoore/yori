@@ -44,7 +44,7 @@ CHAR strZHelpText[] =
 BOOL
 ZHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Z %i.%i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Z %i.%02i\n"), YORI_VER_MAJOR, YORI_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -387,6 +387,7 @@ ZBuildScoreboardAndSelectBest(
     BOOL SeperatorBefore;
     BOOL SeperatorAfter;
     BOOL AddThisEntry;
+    BOOL FoundAsParentOnly;
 
     //
     //  Allocate enough entries for everything we know about, including all
@@ -409,7 +410,7 @@ ZBuildScoreboardAndSelectBest(
 
     if (FullMatchToUserSpec->LengthInChars > 0) {
         memcpy(&Entries[EntriesPopulated].DirectoryName, FullMatchToUserSpec, sizeof(YORI_STRING));
-        Entries[EntriesPopulated].Score = Z_MAX_RECENT_DIRS * 10;
+        Entries[EntriesPopulated].Score = Z_MAX_RECENT_DIRS * 16;
         EntriesPopulated++;
     }
 
@@ -419,13 +420,14 @@ ZBuildScoreboardAndSelectBest(
         FoundRecentDir = CONTAINING_RECORD(ListEntry, Z_RECENT_DIRECTORY, ListEntry);
         ListEntry = YoriLibGetNextListEntry(&ZRecentDirectories.RecentDirList, ListEntry);
         AddThisEntry = FALSE;
+        FoundAsParentOnly = FALSE;
 
         //
         //  Calculate a rough score for this entry.
         //
 
-        ScoreForThisEntry = Index * (Z_MAX_RECENT_DIRS / 4);
-        ScoreForThisEntry += FoundRecentDir->HitCount * (Z_MAX_RECENT_DIRS / 4);
+        ScoreForThisEntry = Index * (Z_MAX_RECENT_DIRS / 8);
+        ScoreForThisEntry += FoundRecentDir->HitCount * (Z_MAX_RECENT_DIRS / 8);
 
         //
         //  Determine if it's a match and we should add it.
@@ -503,19 +505,27 @@ ZBuildScoreboardAndSelectBest(
                 StringToAdd.LengthInChars = FoundRecentDir->DirectoryName.LengthInChars;
             }
             AddThisEntry = TRUE;
+            FoundAsParentOnly = TRUE;
         }
 
         //
         //  If the currently found directory has already been added by the
         //  fully resolved user specification or an earlier parent match,
-        //  don't add it twice, just add the current score to the initial one
+        //  don't add it twice.  If it's a high quality match, such as
+        //  against a user specification or final component, add the scores
+        //  together.  Don't do this if the match was against a parent
+        //  component, because many entries may have the same ancestors but
+        //  that doesn't imply they have the quality of all children
+        //  combined.
         //
 
         if (AddThisEntry) {
             for (BestIndex = 0; BestIndex < EntriesPopulated; BestIndex++) {
                 if (YoriLibCompareStringInsensitive(&Entries[BestIndex].DirectoryName, &StringToAdd) == 0) {
 
-                    Entries[BestIndex].Score += ScoreForThisEntry;
+                    if (!FoundAsParentOnly) {
+                        Entries[BestIndex].Score += ScoreForThisEntry;
+                    }
                     AddThisEntry = FALSE;
                     break;
                 }

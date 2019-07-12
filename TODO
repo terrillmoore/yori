@@ -1,16 +1,11 @@
 v1.0:
- - Ypm upgrade remove all before install so files can move between packages
- - Hexdump -r
- - Make selection use RTF
  - General MSFIX review
- - Tool for creating VHDs
- - Split sdir brief recurse into standalone du
- - 32 bit setver on HyperV server
- - Share sdir color logic
+
+v1.1:
+ - Wide char support in sdir
 
 To consider:
  - Use CopyFileEx when compressing to eliminate CreateFile?
- - Isolate aliases during call
  - Colorize help and error text
  - Ctrl+R
  - More select should use logical line coordinates rather than conhost

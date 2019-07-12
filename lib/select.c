@@ -60,6 +60,23 @@ YoriLibIsPreviousSelectionActive(
 }
 
 /**
+ Returns TRUE if a selection has commenced from a point, and FALSE if it has
+ not commenced or is a fully specified region.
+
+ @param Selection The structure describing the current selection state.
+
+ @return TRUE if a current selection has originated from a point, FALSE if it
+         has not.
+ */
+BOOL
+YoriLibSelectionInitialSpecified(
+    __in PYORILIB_SELECTION Selection
+    )
+{
+    return Selection->InitialSpecified;
+}
+
+/**
  Update a range of console cells with specified attributes.  If the attributes
  don't exist due to allocation failure, use a default attribute for the
  entire range.
@@ -154,8 +171,6 @@ YoriLibClearPreviousSelectionDisplay(
     PWORD AttributeReadPoint;
     PYORILIB_PREVIOUS_SELECTION_BUFFER ActiveAttributes;
 
-    ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
-
     //
     //  If there was no previous selection, clearing it is easy
     //
@@ -163,6 +178,8 @@ YoriLibClearPreviousSelectionDisplay(
     if (!YoriLibIsPreviousSelectionActive(Selection)) {
         return;
     }
+
+    ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 
     //
     //  Grab a pointer to the previous selection attributes.  Note the
@@ -186,6 +203,18 @@ YoriLibClearPreviousSelectionDisplay(
             AttributeReadPoint += LineLength;
         }
     }
+
+    Selection->CurrentlyDisplayed.Left = 0;
+    Selection->CurrentlyDisplayed.Right = 0;
+    Selection->CurrentlyDisplayed.Top = 0;
+    Selection->CurrentlyDisplayed.Bottom = 0;
+
+    Selection->PreviouslyDisplayed.Left = Selection->CurrentlyDisplayed.Left;
+    Selection->PreviouslyDisplayed.Top = Selection->CurrentlyDisplayed.Top;
+    Selection->PreviouslyDisplayed.Right = Selection->CurrentlyDisplayed.Right;
+    Selection->PreviouslyDisplayed.Bottom = Selection->CurrentlyDisplayed.Bottom;
+
+    Selection->SelectionPreviouslyActive = FALSE;
 }
 
 /**
@@ -218,6 +247,24 @@ YoriLibGetSelectionColor(
 }
 
 /**
+ Set the color to use for a selection.  If this function is not called, the
+ popup color from the console is used.
+
+ @param Selection Pointer to the selection to set a custom selection color on.
+
+ @param SelectionColor The Win32 selection color to use.
+ */
+VOID
+YoriLibSetSelectionColor(
+    __in PYORILIB_SELECTION Selection,
+    __in WORD SelectionColor
+    )
+{
+    Selection->SelectionColor = SelectionColor;
+    Selection->SelectionColorSet = TRUE;
+}
+
+/**
  Draw the selection highlight around the current selection, and save off the
  character attributes of the text underneath the selection.
 
@@ -235,10 +282,7 @@ YoriLibDrawCurrentSelectionDisplay(
     DWORD CharsWritten;
     DWORD RequiredLength;
     PWORD AttributeWritePoint;
-    WORD SelectionColor;
     PYORILIB_PREVIOUS_SELECTION_BUFFER ActiveAttributes;
-
-    ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 
     //
     //  If there is no current selection, drawing it is easy
@@ -248,6 +292,8 @@ YoriLibDrawCurrentSelectionDisplay(
 
         return;
     }
+
+    ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 
     RequiredLength = (Selection->CurrentlyDisplayed.Right - Selection->CurrentlyDisplayed.Left + 1) * (Selection->CurrentlyDisplayed.Bottom - Selection->CurrentlyDisplayed.Top + 1);
 
@@ -271,7 +317,10 @@ YoriLibDrawCurrentSelectionDisplay(
     AttributeWritePoint = ActiveAttributes->AttributeArray;
     LineLength = (SHORT)(Selection->CurrentlyDisplayed.Right - Selection->CurrentlyDisplayed.Left + 1);
 
-    SelectionColor = YoriLibGetSelectionColor(ConsoleHandle);
+    if (!Selection->SelectionColorSet) {
+        Selection->SelectionColor = YoriLibGetSelectionColor(ConsoleHandle);
+        Selection->SelectionColorSet = TRUE;
+    }
 
     for (LineIndex = Selection->CurrentlyDisplayed.Top; LineIndex <= Selection->CurrentlyDisplayed.Bottom; LineIndex++) {
         StartPoint.X = Selection->CurrentlyDisplayed.Left;
@@ -282,7 +331,7 @@ YoriLibDrawCurrentSelectionDisplay(
             AttributeWritePoint += LineLength;
         }
 
-        FillConsoleOutputAttribute(ConsoleHandle, SelectionColor, LineLength, StartPoint, &CharsWritten);
+        FillConsoleOutputAttribute(ConsoleHandle, Selection->SelectionColor, LineLength, StartPoint, &CharsWritten);
     }
 
     Selection->PreviouslyDisplayed.Left = Selection->CurrentlyDisplayed.Left;
@@ -315,6 +364,9 @@ YoriLibDrawCurrentSelectionDisplay(
  @param UpdateNewRegionDisplay If TRUE, the NewRegion area should be marked
         as selected within the console.  If FALSE, the range is left
         unmodified in the console.
+
+ @param SelectionColor Specifies the color of the selection to apply within
+        the console.  Only meaningful if UpdateNewRegionDisplay is TRUE.
  */
 VOID
 YoriLibCreateNewAttributeBufferFromPreviousBuffer(
@@ -322,7 +374,8 @@ YoriLibCreateNewAttributeBufferFromPreviousBuffer(
     __in PSMALL_RECT OldRegion,
     __out PYORILIB_PREVIOUS_SELECTION_BUFFER NewAttributes,
     __in PSMALL_RECT NewRegion,
-    __in BOOL UpdateNewRegionDisplay
+    __in BOOL UpdateNewRegionDisplay,
+    __in WORD SelectionColor
     )
 {
     SHORT LineIndex;
@@ -335,7 +388,6 @@ YoriLibCreateNewAttributeBufferFromPreviousBuffer(
     DWORD CharsWritten;
     DWORD RequiredLength;
     PWORD AttributeWritePoint;
-    WORD SelectionColor;
 
     ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 
@@ -352,7 +404,6 @@ YoriLibCreateNewAttributeBufferFromPreviousBuffer(
     //  and update the console to have selection color
     //
 
-    SelectionColor = YoriLibGetSelectionColor(ConsoleHandle);
     AttributeWritePoint = NewAttributes->AttributeArray;
     for (LineIndex = NewRegion->Top; LineIndex <= NewRegion->Bottom; LineIndex++) {
 
@@ -581,7 +632,14 @@ YoriLibDrawCurrentSelectionOverPreviousSelection(
     NewAttributes = &Selection->PreviousBuffer[NewAttributeIndex];
     OldAttributes = &Selection->PreviousBuffer[Selection->CurrentPreviousIndex];
 
-    YoriLibCreateNewAttributeBufferFromPreviousBuffer(OldAttributes, &Selection->PreviouslyDisplayed, NewAttributes, &Selection->CurrentlyDisplayed, TRUE);
+    if (!Selection->SelectionColorSet) {
+        HANDLE ConsoleHandle;
+        ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+        Selection->SelectionColor = YoriLibGetSelectionColor(ConsoleHandle);
+        Selection->SelectionColorSet = TRUE;
+    }
+
+    YoriLibCreateNewAttributeBufferFromPreviousBuffer(OldAttributes, &Selection->PreviouslyDisplayed, NewAttributes, &Selection->CurrentlyDisplayed, TRUE, Selection->SelectionColor);
 
     ASSERT(Selection->CurrentPreviousIndex != NewAttributeIndex);
     Selection->CurrentPreviousIndex = NewAttributeIndex;
@@ -659,6 +717,7 @@ YoriLibClearSelection(
     Selection->CurrentlySelected.Bottom = 0;
 
     Selection->SelectionCurrentlyActive = FALSE;
+    Selection->InitialSpecified = FALSE;
 
     Selection->PeriodicScrollAmount.X = 0;
     Selection->PeriodicScrollAmount.Y = 0;
@@ -774,11 +833,12 @@ YoriLibPeriodicScrollForSelection(
     HANDLE ConsoleHandle;
     SHORT CellsToScroll;
     CONSOLE_SCREEN_BUFFER_INFO ScreenInfo;
+    SMALL_RECT NewWindow;
 
     if (Selection->PeriodicScrollAmount.Y == 0 &&
         Selection->PeriodicScrollAmount.X == 0) {
 
-        return TRUE;
+        return FALSE;
     }
 
     ConsoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -786,57 +846,69 @@ YoriLibPeriodicScrollForSelection(
         return FALSE;
     }
 
+    NewWindow.Top = ScreenInfo.srWindow.Top;
+    NewWindow.Bottom = ScreenInfo.srWindow.Bottom;
+    NewWindow.Left = ScreenInfo.srWindow.Left;
+    NewWindow.Right = ScreenInfo.srWindow.Right;
+
     if (Selection->PeriodicScrollAmount.Y < 0) {
         CellsToScroll = (SHORT)(0 - Selection->PeriodicScrollAmount.Y);
-        if (ScreenInfo.srWindow.Top > 0) {
-            if (ScreenInfo.srWindow.Top > CellsToScroll) {
-                ScreenInfo.srWindow.Top = (SHORT)(ScreenInfo.srWindow.Top - CellsToScroll);
-                ScreenInfo.srWindow.Bottom = (SHORT)(ScreenInfo.srWindow.Bottom - CellsToScroll);
+        if (NewWindow.Top > 0) {
+            if (NewWindow.Top > CellsToScroll) {
+                NewWindow.Top = (SHORT)(NewWindow.Top - CellsToScroll);
+                NewWindow.Bottom = (SHORT)(NewWindow.Bottom - CellsToScroll);
             } else {
-                ScreenInfo.srWindow.Bottom = (SHORT)(ScreenInfo.srWindow.Bottom - ScreenInfo.srWindow.Top);
-                ScreenInfo.srWindow.Top = 0;
+                NewWindow.Bottom = (SHORT)(NewWindow.Bottom - NewWindow.Top);
+                NewWindow.Top = 0;
             }
         }
     } else if (Selection->PeriodicScrollAmount.Y > 0) {
         CellsToScroll = Selection->PeriodicScrollAmount.Y;
-        if (ScreenInfo.srWindow.Bottom < ScreenInfo.dwSize.Y - 1) {
-            if (ScreenInfo.srWindow.Bottom < ScreenInfo.dwSize.Y - CellsToScroll - 1) {
-                ScreenInfo.srWindow.Top = (SHORT)(ScreenInfo.srWindow.Top + CellsToScroll);
-                ScreenInfo.srWindow.Bottom = (SHORT)(ScreenInfo.srWindow.Bottom + CellsToScroll);
+        if (NewWindow.Bottom < ScreenInfo.dwSize.Y - 1) {
+            if (NewWindow.Bottom < ScreenInfo.dwSize.Y - CellsToScroll - 1) {
+                NewWindow.Top = (SHORT)(NewWindow.Top + CellsToScroll);
+                NewWindow.Bottom = (SHORT)(NewWindow.Bottom + CellsToScroll);
             } else {
-                ScreenInfo.srWindow.Top = (SHORT)(ScreenInfo.srWindow.Top + (ScreenInfo.dwSize.Y - ScreenInfo.srWindow.Bottom - 1));
-                ScreenInfo.srWindow.Bottom = (SHORT)(ScreenInfo.dwSize.Y - 1);
+                NewWindow.Top = (SHORT)(NewWindow.Top + (ScreenInfo.dwSize.Y - NewWindow.Bottom - 1));
+                NewWindow.Bottom = (SHORT)(ScreenInfo.dwSize.Y - 1);
             }
         }
     }
 
     if (Selection->PeriodicScrollAmount.X < 0) {
         CellsToScroll = (SHORT)(0 - Selection->PeriodicScrollAmount.X);
-        if (ScreenInfo.srWindow.Left > 0) {
-            if (ScreenInfo.srWindow.Left > CellsToScroll) {
-                ScreenInfo.srWindow.Left = (SHORT)(ScreenInfo.srWindow.Left - CellsToScroll);
-                ScreenInfo.srWindow.Right = (SHORT)(ScreenInfo.srWindow.Right - CellsToScroll);
+        if (NewWindow.Left > 0) {
+            if (NewWindow.Left > CellsToScroll) {
+                NewWindow.Left = (SHORT)(NewWindow.Left - CellsToScroll);
+                NewWindow.Right = (SHORT)(NewWindow.Right - CellsToScroll);
             } else {
-                ScreenInfo.srWindow.Right = (SHORT)(ScreenInfo.srWindow.Right - ScreenInfo.srWindow.Left);
-                ScreenInfo.srWindow.Left = 0;
+                NewWindow.Right = (SHORT)(NewWindow.Right - NewWindow.Left);
+                NewWindow.Left = 0;
             }
         }
     } else if (Selection->PeriodicScrollAmount.X > 0) {
         CellsToScroll = Selection->PeriodicScrollAmount.X;
-        if (ScreenInfo.srWindow.Right < ScreenInfo.dwSize.X - 1) {
-            if (ScreenInfo.srWindow.Right < ScreenInfo.dwSize.X - CellsToScroll - 1) {
-                ScreenInfo.srWindow.Left = (SHORT)(ScreenInfo.srWindow.Left + CellsToScroll);
-                ScreenInfo.srWindow.Right = (SHORT)(ScreenInfo.srWindow.Right + CellsToScroll);
+        if (NewWindow.Right < ScreenInfo.dwSize.X - 1) {
+            if (NewWindow.Right < ScreenInfo.dwSize.X - CellsToScroll - 1) {
+                NewWindow.Left = (SHORT)(NewWindow.Left + CellsToScroll);
+                NewWindow.Right = (SHORT)(NewWindow.Right + CellsToScroll);
             } else {
-                ScreenInfo.srWindow.Left = (SHORT)(ScreenInfo.srWindow.Left + (ScreenInfo.dwSize.X - ScreenInfo.srWindow.Right - 1));
-                ScreenInfo.srWindow.Right = (SHORT)(ScreenInfo.dwSize.X - 1);
+                NewWindow.Left = (SHORT)(NewWindow.Left + (ScreenInfo.dwSize.X - NewWindow.Right - 1));
+                NewWindow.Right = (SHORT)(ScreenInfo.dwSize.X - 1);
             }
         }
     }
 
-    SetConsoleWindowInfo(ConsoleHandle, TRUE, &ScreenInfo.srWindow);
+    if (NewWindow.Left == ScreenInfo.srWindow.Left &&
+        NewWindow.Right == ScreenInfo.srWindow.Right &&
+        NewWindow.Top == ScreenInfo.srWindow.Top &&
+        NewWindow.Bottom == ScreenInfo.srWindow.Bottom) {
 
-    return FALSE;
+        return FALSE;
+    }
+
+    SetConsoleWindowInfo(ConsoleHandle, TRUE, &NewWindow);
+    return TRUE;
 }
 
 /**
@@ -866,7 +938,7 @@ YoriLibCreateSelectionFromPoint(
     Selection->InitialPoint.X = X;
     Selection->InitialPoint.Y = Y;
 
-    Selection->SelectionCurrentlyActive = TRUE;
+    Selection->InitialSpecified = TRUE;
 
     return BufferChanged;
 }
@@ -949,7 +1021,7 @@ YoriLibUpdateSelectionToPoint(
         return FALSE;
     }
 
-    ASSERT(YoriLibIsSelectionActive(Selection));
+    ASSERT(Selection->InitialSpecified);
 
     //
     //  Assume that the mouse move is inside the window, so periodic
@@ -1029,6 +1101,7 @@ YoriLibUpdateSelectionToPoint(
         Selection->CurrentlySelected.Bottom = Selection->InitialPoint.Y;
     }
 
+    Selection->SelectionCurrentlyActive = TRUE;
 
     return TRUE;
 }
@@ -1089,6 +1162,7 @@ YoriLibCopySelectionIfPresent(
     YORI_STRING TextToCopy;
     YORI_STRING VtText;
     YORI_STRING HtmlText;
+    YORI_STRING RtfText;
     SHORT LineLength;
     SHORT LineCount;
     SHORT LineIndex;
@@ -1097,6 +1171,8 @@ YoriLibCopySelectionIfPresent(
     DWORD CharsWritten;
     HANDLE ConsoleHandle;
     YORILIB_PREVIOUS_SELECTION_BUFFER Attributes;
+    YORI_CONSOLE_SCREEN_BUFFER_INFOEX ScreenInfoEx;
+    PDWORD ColorTableToUse = NULL;
 
     //
     //  No selection, nothing to copy
@@ -1164,7 +1240,7 @@ YoriLibCopySelectionIfPresent(
 
     //
     //  Combine the captured text with previously saved attributes into a
-    //  VT100 stream.  This will turn into HTML.
+    //  VT100 stream.  This will turn into HTML and RTF.
     //
 
     YoriLibInitEmptyString(&VtText);
@@ -1174,7 +1250,8 @@ YoriLibCopySelectionIfPresent(
                                                       &Selection->CurrentlyDisplayed,
                                                       &Attributes,
                                                       &Selection->CurrentlySelected,
-                                                      FALSE);
+                                                      FALSE,
+                                                      0);
 
     if (Attributes.AttributeArray == NULL) {
         YoriLibFreeStringContents(&TextToCopy);
@@ -1225,30 +1302,49 @@ YoriLibCopySelectionIfPresent(
     }
 
     //
-    //  Convert the VT100 form into HTML, and free it
+    //  Convert the VT100 form into HTML and RTF, and free it
     //
 
+    if (DllKernel32.pGetConsoleScreenBufferInfoEx) {
+        ScreenInfoEx.cbSize = sizeof(ScreenInfoEx);
+        if (DllKernel32.pGetConsoleScreenBufferInfoEx(ConsoleHandle, &ScreenInfoEx)) {
+            ColorTableToUse = (PDWORD)&ScreenInfoEx.ColorTable;
+        }
+    }
+
     YoriLibInitEmptyString(&HtmlText);
-    if (!YoriLibHtmlConvertToHtmlFromVt(&VtText, &HtmlText, 4)) {
+    if (!YoriLibHtmlConvertToHtmlFromVt(&VtText, &HtmlText, ColorTableToUse, 4)) {
         YoriLibFreeStringContents(&VtText);
         YoriLibFreeStringContents(&TextToCopy);
         YoriLibFreeStringContents(&HtmlText);
         return FALSE;
     }
 
+    YoriLibInitEmptyString(&RtfText);
+    if (!YoriLibRtfConvertToRtfFromVt(&VtText, &RtfText, ColorTableToUse)) {
+        YoriLibFreeStringContents(&VtText);
+        YoriLibFreeStringContents(&TextToCopy);
+        YoriLibFreeStringContents(&HtmlText);
+        YoriLibFreeStringContents(&RtfText);
+        return FALSE;
+    }
+
     YoriLibFreeStringContents(&VtText);
 
     //
-    //  Copy both HTML form and plain text form to the clipboard
+    //  Copy HTML, RTF and plain text forms to the clipboard
     //
 
-    if (YoriLibCopyTextAndHtml(&TextToCopy, &HtmlText)) {
+    if (YoriLibCopyTextRtfAndHtml(&TextToCopy, &RtfText, &HtmlText)) {
         YoriLibFreeStringContents(&TextToCopy);
         YoriLibFreeStringContents(&HtmlText);
+        YoriLibFreeStringContents(&RtfText);
+
         return TRUE;
     }
 
     YoriLibFreeStringContents(&HtmlText);
+    YoriLibFreeStringContents(&RtfText);
     YoriLibFreeStringContents(&TextToCopy);
     return FALSE;
 }
@@ -1268,16 +1364,88 @@ YoriLibGetSelectionDoubleClickBreakChars(
     __out PYORI_STRING BreakChars
     )
 {
+    DWORD WriteIndex;
+    DWORD ReadIndex;
+    YORI_STRING Substring;
+
     YoriLibInitEmptyString(BreakChars);
     if (!YoriLibAllocateAndGetEnvironmentVariable(_T("YORIQUICKEDITBREAKCHARS"), BreakChars) || BreakChars->LengthInChars == 0) {
 
         //
+        //  0x2500 is Unicode full horizontal line (used by sdir)
         //  0x2502 is Unicode full vertical line (used by sdir)
+        //  0x00BB is double angle quotation mark, used in elevated prompts
         //
 
-        YoriLibConstantString(BreakChars, _T(" '<>|\x2502"));
+        YoriLibConstantString(BreakChars, _T(" '[]<>|\x2500\x2502\x252c\x2534\x00BB"));
+        return TRUE;
     }
+
+    ReadIndex = 0;
+    WriteIndex = 0;
+    YoriLibInitEmptyString(&Substring);
+
+    for (ReadIndex = 0; ReadIndex < BreakChars->LengthInChars; ReadIndex++) {
+        if (ReadIndex + 1 < BreakChars->LengthInChars &&
+            BreakChars->StartOfString[ReadIndex] == '0' &&
+            BreakChars->StartOfString[ReadIndex + 1] == 'x') {
+
+            DWORD CharsConsumed;
+            LONGLONG Number;
+
+            Substring.StartOfString = &BreakChars->StartOfString[ReadIndex];
+            Substring.LengthInChars = BreakChars->LengthInChars - ReadIndex;
+
+            if (YoriLibStringToNumber(&Substring, FALSE, &Number, &CharsConsumed) &&
+                CharsConsumed > 0 &&
+                Number <= 0xFFFF) {
+
+                BreakChars->StartOfString[WriteIndex] = (TCHAR)Number;
+                WriteIndex++;
+                ReadIndex += CharsConsumed;
+            }
+        } else {
+            if (ReadIndex != WriteIndex) {
+                BreakChars->StartOfString[WriteIndex] = BreakChars->StartOfString[ReadIndex];
+            }
+            WriteIndex++;
+        }
+    }
+
+    BreakChars->LengthInChars = WriteIndex;
+
     return TRUE;
+}
+
+/**
+ Indicates if Yori QuickEdit should be enabled based on the state of the
+ environment.  In this mode, the shell will disable QuickEdit support from
+ the console and implement its own selection logic, but reenable QuickEdit
+ for the benefit of applications.
+
+ @return TRUE to indicate YoriQuickEdit should be enabled, and FALSE to
+         leave the user's selection for QuickEdit behavior in effect.
+ */
+BOOL
+YoriLibIsYoriQuickEditEnabled()
+{
+    YORI_STRING EnvVar;
+    LONGLONG llTemp;
+    DWORD CharsConsumed;
+
+    YoriLibInitEmptyString(&EnvVar);
+    if (!YoriLibAllocateAndGetEnvironmentVariable(_T("YORIQUICKEDIT"), &EnvVar)) {
+        return FALSE;
+    }
+
+    if (YoriLibStringToNumber(&EnvVar, TRUE, &llTemp, &CharsConsumed) && CharsConsumed > 0) {
+        YoriLibFreeStringContents(&EnvVar);
+        if (llTemp == 1) {
+            return TRUE;
+        }
+    }
+    YoriLibFreeStringContents(&EnvVar);
+    return FALSE;
 }
 
 

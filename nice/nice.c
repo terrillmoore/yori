@@ -46,7 +46,7 @@ CHAR strNiceHelpText[] =
 BOOL
 NiceHelp()
 {
-    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Nice %i.%i\n"), NICE_VER_MAJOR, NICE_VER_MINOR);
+    YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("Nice %i.%02i\n"), NICE_VER_MAJOR, NICE_VER_MINOR);
 #if YORI_BUILD_ID
     YoriLibOutput(YORI_LIB_OUTPUT_STDOUT, _T("  Build %i\n"), YORI_BUILD_ID);
 #endif
@@ -102,6 +102,10 @@ ENTRYPOINT(
             } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("license")) == 0) {
                 YoriLibDisplayMitLicense(_T("2017-2018"));
                 return EXIT_SUCCESS;
+            } else if (YoriLibCompareStringWithLiteralInsensitive(&Arg, _T("-")) == 0) {
+                StartArg = i + 1;
+                ArgumentUnderstood = TRUE;
+                break;
             }
         } else {
             ArgumentUnderstood = TRUE;
@@ -114,7 +118,7 @@ ENTRYPOINT(
         }
     }
 
-    if (ArgC < 2) {
+    if (StartArg == 0 || StartArg == ArgC) {
         YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("nice: missing argument\n"));
         return EXIT_FAILURE;
     }
@@ -157,6 +161,7 @@ ENTRYPOINT(
 
             YoriLibOutput(YORI_LIB_OUTPUT_STDERR, _T("nice: unable to find executable\n"));
             YoriLibFree(ChildArgs);
+            YoriLibFreeStringContents(&Executable);
             return EXIT_FAILURE;
         }
 

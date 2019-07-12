@@ -3,7 +3,7 @@
  *
  * Parses an expression into component pieces
  *
- * Copyright (c) 2014-2017 Malcolm J. Smith
+ * Copyright (c) 2014-2019 Malcolm J. Smith
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -88,11 +88,24 @@ YoriShIsArgumentSeperator(
             Terminate = TRUE;
         } else if (String->StartOfString[0] == '>') {
             CharsToConsume++;
-            if (String->StartOfString[1] == '>') {
+            if (String->LengthInChars >= 2 && String->StartOfString[1] == '>') {
                 CharsToConsume++;
+            } else if (String->LengthInChars >= 3 && String->StartOfString[1] == '&' && String->StartOfString[2] == '2') {
+                CharsToConsume += 2;
+                Terminate = TRUE;
             }
         } else if (String->StartOfString[0] == '<') {
             CharsToConsume++;
+        } else if (String->StartOfString[0] == '1') {
+            if (String->LengthInChars >= 2 && String->StartOfString[1] == '>') {
+                CharsToConsume += 2;
+                if (String->LengthInChars >= 3 && String->StartOfString[2] == '>') {
+                    CharsToConsume++;
+                } else if (String->LengthInChars >= 4 && String->StartOfString[2] == '&' && String->StartOfString[3] == '2') {
+                    CharsToConsume += 2;
+                    Terminate = TRUE;
+                }
+            }
         } else if (String->StartOfString[0] == '2') {
             if (String->LengthInChars >= 2 && String->StartOfString[1] == '>') {
                 CharsToConsume += 2;
@@ -275,7 +288,8 @@ YoriShParseCmdlineToCmdContext(
                 TerminateArg = TRUE;
                 TerminateNextArg = FALSE;
                 CharsToConsume = 0;
-            } else if (YoriShIsArgumentSeperator(&Char, &CharsToConsume, &TerminateNextArg)) {
+            } else if ((ArgCount > 0 || RequiredCharCount > 0) &&
+                       YoriShIsArgumentSeperator(&Char, &CharsToConsume, &TerminateNextArg)) {
                 TerminateArg = TRUE;
             }
         }
@@ -497,7 +511,8 @@ YoriShParseCmdlineToCmdContext(
                 TerminateArg = TRUE;
                 TerminateNextArg = FALSE;
                 CharsToConsume = 0;
-            } else if (YoriShIsArgumentSeperator(&Char, &CharsToConsume, &TerminateNextArg)) {
+            } else if ((ArgCount > 0 || (DWORD)(OutputString - CmdContext->ArgV[ArgCount].StartOfString) > 0) &&
+                       YoriShIsArgumentSeperator(&Char, &CharsToConsume, &TerminateNextArg)) {
                 TerminateArg = TRUE;
             }
         }
@@ -1009,49 +1024,6 @@ YoriShIsArgumentProgramSeperator(
 }
 
 /**
- Return TRUE if the argument is a special DOS device name, FALSE if it is
- a regular file.  DOS device names include things like AUX, CON, PRN etc.
- In Yori, a DOS device name is only a DOS device name if it does not
- contain any path information.
-
- @param File The file name to check.
-
- @return TRUE to indicate this argument is a DOS device name, FALSE to
-         indicate that it is a regular file.
- */
-BOOL
-YoriShIsFileNameDeviceName(
-    __in PYORI_STRING File
-    )
-{
-    if (YoriLibCompareStringWithLiteralInsensitive(File, _T("CON")) == 0 ||
-        YoriLibCompareStringWithLiteralInsensitive(File, _T("AUX")) == 0 ||
-        YoriLibCompareStringWithLiteralInsensitive(File, _T("PRN")) == 0 ||
-        YoriLibCompareStringWithLiteralInsensitive(File, _T("NUL")) == 0) {
-
-        return TRUE;
-    }
-
-    if (File->LengthInChars < 4) {
-        return FALSE;
-    }
-
-    if (YoriLibCompareStringWithLiteralInsensitiveCount(File, _T("LPT"), 3) == 0 &&
-        (File->StartOfString[3] >= '1' && File->StartOfString[3] <= '9')) {
-
-        return TRUE;
-    }
-
-    if (YoriLibCompareStringWithLiteralInsensitiveCount(File, _T("COM"), 3) == 0 &&
-        (File->StartOfString[3] >= '1' && File->StartOfString[3] <= '9')) {
-
-        return TRUE;
-    }
-
-    return FALSE;
-}
-
-/**
  Check if a given name is a DOS device name.  If it is, retain the name since
  the intention is to talk to the device, and reference it for use in a new
  environment.  If it is not a DOS device name, resolve it to a fully qualified
@@ -1093,7 +1065,7 @@ YoriShCheckForDeviceNameAndDuplicate(
     //
 
     if (UserName.LengthInChars == 0 ||
-        YoriShIsFileNameDeviceName(&UserName)) {
+        YoriLibIsFileNameDeviceName(&UserName)) {
 
         if (UserName.MemoryToFree != NULL) {
             YoriLibReference(UserName.MemoryToFree);
@@ -1148,9 +1120,12 @@ YoriShParseCmdContextToExecContext(
     BOOL RemoveThisArg;
     BOOL EndOfExpression;
     DWORD ArgumentsConsumed = 0;
+    DWORD CharOffset;
     PYORI_STRING ThisArg;
+    PYORI_STRING ExecContextRedirectString;
 
     ZeroMemory(ExecContext, sizeof(YORI_SH_SINGLE_EXEC_CONTEXT));
+    ExecContext->ReferenceCount = 1;
     ExecContext->StdInType = StdInTypeDefault;
     ExecContext->StdOutType = StdOutTypeDefault;
     ExecContext->StdErrType = StdErrTypeDefault;
@@ -1169,7 +1144,8 @@ YoriShParseCmdContextToExecContext(
         if (Count == CmdContext->ArgC - 1) {
             EndOfExpression = TRUE;
         }
-        if (YoriShIsArgumentProgramSeperator(&CmdContext->ArgV[Count], EndOfExpression)) {
+        if (!CmdContext->ArgContexts[Count].Quoted &&
+            YoriShIsArgumentProgramSeperator(&CmdContext->ArgV[Count], EndOfExpression)) {
             break;
         }
     }
@@ -1187,75 +1163,117 @@ YoriShParseCmdContextToExecContext(
     for (Count = InitialArgument; Count < (InitialArgument + ArgumentsConsumed); Count++) {
 
         RemoveThisArg = FALSE;
+        ThisArg = &CmdContext->ArgV[Count];
+        ExecContextRedirectString = NULL;
+        CharOffset = 0;
 
         //
-        //  The first argument is the thing to execute and cannot contain
-        //  any redirection information, so skip it.
+        //  When parsing the CmdContext, any argument starting with a
+        //  quote is not a candidate to be a redirect.  However, it is
+        //  valid to have a redirect followed by a file name in quotes,
+        //  in which case the argument isn't considered "quoted" but
+        //  can still contain spaces.
         //
 
-        if (Count > InitialArgument) {
+        if (!CmdContext->ArgContexts[Count].Quoted) {
 
-            ThisArg = &CmdContext->ArgV[Count];
+            if (ThisArg->StartOfString[0] == '<') {
+                YoriShExecContextCleanupStdIn(ExecContext);
+                ExecContext->StdInType = StdInTypeFile;
+                YoriLibInitEmptyString(&ExecContext->StdIn.File.FileName);
+                CharOffset = 1;
+                ExecContextRedirectString = &ExecContext->StdIn.File.FileName;
+                RemoveThisArg = TRUE;
+            }
 
-            //
-            //  When parsing the CmdContext, any argument starting with a
-            //  quote is not a candidate to be a redirect.  However, it is
-            //  valid to have a redirect followed by a file name in quotes,
-            //  in which case the argument isn't considered "quoted" but
-            //  can still contain spaces.
-            //
-
-            if (!CmdContext->ArgContexts[Count].Quoted) {
-
-                if (ThisArg->StartOfString[0] == '<') {
-                    YoriShExecContextCleanupStdIn(ExecContext);
-                    ExecContext->StdInType = StdInTypeFile;
-                    YoriLibInitEmptyString(&ExecContext->StdIn.File.FileName);
-                    YoriShCheckForDeviceNameAndDuplicate(ThisArg,
-                                                         1,
-                                                         &ExecContext->StdIn.File.FileName);
-                    RemoveThisArg = TRUE;
+            if (ThisArg->StartOfString[0] == '>') {
+                YoriShExecContextCleanupStdOut(ExecContext);
+                if (ThisArg->StartOfString[1] == '>') {
+                    ExecContext->StdOutType = StdOutTypeAppend;
+                    CharOffset = 2;
+                    ExecContextRedirectString = &ExecContext->StdOut.Append.FileName;
+                } else if (ThisArg->StartOfString[1] == '&') {
+                    if (ThisArg->StartOfString[2] == '2') {
+                        ExecContext->StdOutType = StdOutTypeStdErr;
+                        if (ExecContext->StdErrType == StdErrTypeStdOut) {
+                            ExecContext->StdErrType = StdErrTypeDefault;
+                        }
+                    }
+                } else {
+                    ExecContext->StdOutType = StdOutTypeOverwrite;
+                    CharOffset = 1;
+                    ExecContextRedirectString = &ExecContext->StdOut.Overwrite.FileName;
                 }
+                RemoveThisArg = TRUE;
+            }
 
-                if (ThisArg->StartOfString[0] == '>') {
+            if (ThisArg->StartOfString[0] == '1') {
+                if (ThisArg->StartOfString[1] == '>') {
                     YoriShExecContextCleanupStdOut(ExecContext);
-                    if (ThisArg->StartOfString[1] == '>') {
+                    if (ThisArg->StartOfString[2] == '>') {
                         ExecContext->StdOutType = StdOutTypeAppend;
-                        YoriShCheckForDeviceNameAndDuplicate(ThisArg,
-                                                             2,
-                                                             &ExecContext->StdOut.Append.FileName);
+                        CharOffset = 3;
+                        ExecContextRedirectString = &ExecContext->StdOut.Append.FileName;
+                    } else if (ThisArg->StartOfString[2] == '&') {
+                        if (ThisArg->StartOfString[3] == '2') {
+                            ExecContext->StdOutType = StdOutTypeStdErr;
+                            if (ExecContext->StdErrType == StdErrTypeStdOut) {
+                                ExecContext->StdErrType = StdErrTypeDefault;
+                            }
+                        }
                     } else {
                         ExecContext->StdOutType = StdOutTypeOverwrite;
-                        YoriShCheckForDeviceNameAndDuplicate(ThisArg,
-                                                             1,
-                                                             &ExecContext->StdOut.Overwrite.FileName);
+                        CharOffset = 2;
+                        ExecContextRedirectString = &ExecContext->StdOut.Overwrite.FileName;
                     }
                     RemoveThisArg = TRUE;
                 }
+            }
 
-                if (ThisArg->StartOfString[0] == '2') {
-                    if (ThisArg->StartOfString[1] == '>') {
-                        YoriShExecContextCleanupStdErr(ExecContext);
-                        ExecContext->StdErrType = StdErrTypeDefault;
-                        if (ThisArg->StartOfString[2] == '>') {
-                            ExecContext->StdErrType = StdErrTypeAppend;
-                            YoriShCheckForDeviceNameAndDuplicate(ThisArg,
-                                                                 3,
-                                                                 &ExecContext->StdErr.Append.FileName);
-                        } else if (ThisArg->StartOfString[2] == '&') {
-                            if (ThisArg->StartOfString[3] == '1') {
-                                ExecContext->StdErrType = StdErrTypeStdOut;
+            if (ThisArg->StartOfString[0] == '2') {
+                if (ThisArg->StartOfString[1] == '>') {
+                    YoriShExecContextCleanupStdErr(ExecContext);
+                    ExecContext->StdErrType = StdErrTypeDefault;
+                    if (ThisArg->StartOfString[2] == '>') {
+                        ExecContext->StdErrType = StdErrTypeAppend;
+                        CharOffset = 3;
+                        ExecContextRedirectString = &ExecContext->StdErr.Append.FileName;
+                    } else if (ThisArg->StartOfString[2] == '&') {
+                        if (ThisArg->StartOfString[3] == '1') {
+                            ExecContext->StdErrType = StdErrTypeStdOut;
+                            if (ExecContext->StdOutType == StdOutTypeStdErr) {
+                                ExecContext->StdOutType = StdOutTypeDefault;
                             }
-                        } else {
-                            ExecContext->StdErrType = StdErrTypeOverwrite;
-                            YoriShCheckForDeviceNameAndDuplicate(ThisArg,
-                                                                 2,
-                                                                 &ExecContext->StdErr.Overwrite.FileName);
                         }
-                        RemoveThisArg = TRUE;
+                    } else {
+                        ExecContext->StdErrType = StdErrTypeOverwrite;
+                        CharOffset = 2;
+                        ExecContextRedirectString = &ExecContext->StdErr.Overwrite.FileName;
                     }
+                    RemoveThisArg = TRUE;
                 }
             }
+        }
+
+        //
+        //  If this is a redirect, populate the remainder of the argument, or
+        //  the next argument if the remainder is empty, into the appropriate
+        //  redirect field.  Note this will increment Count to skip arguments
+        //  as needed.
+        //
+
+        if (ExecContextRedirectString) {
+            while (ThisArg->LengthInChars == CharOffset &&
+                   (Count + 1) < (InitialArgument + ArgumentsConsumed)) {
+
+                Count++;
+                ThisArg = &CmdContext->ArgV[Count];
+                CharOffset = 0;
+            }
+
+            YoriShCheckForDeviceNameAndDuplicate(ThisArg,
+                                                 CharOffset,
+                                                 ExecContextRedirectString);
         }
 
         if (!RemoveThisArg) {
@@ -1288,13 +1306,15 @@ YoriShFreeExecContext(
     )
 {
 
+    ASSERT(ExecContext->ReferenceCount == 0);
+
     //
     //  If the process was being debugged, the debugger thread should
     //  have torn down before we tear down the context it uses.
     //
 
     if (ExecContext->hDebuggerThread != NULL) {
-        ASSERT(WaitForSingleObject(ExecContext->hDebuggerThread, 0) == WAIT_OBJECT_0);
+        ASSERT(WaitForSingleObject(ExecContext->hDebuggerThread, 0) == WAIT_OBJECT_0 || ExecContext->DebugPumpThreadFinished);
         CloseHandle(ExecContext->hDebuggerThread);
         ExecContext->hDebuggerThread = NULL;
     }
@@ -1313,6 +1333,45 @@ YoriShFreeExecContext(
         ExecContext->hPrimaryThread = NULL;
     }
 }
+
+/**
+ Add a reference to a single exec context.
+
+ @param ExecContext Pointer to the exec context to reference.
+ */
+VOID
+YoriShReferenceExecContext(
+    __in PYORI_SH_SINGLE_EXEC_CONTEXT ExecContext
+    )
+{
+    ASSERT(ExecContext->ReferenceCount > 0);
+    InterlockedIncrement((LONG *)&ExecContext->ReferenceCount);
+}
+
+/**
+ Dereference a single exec context.
+
+ @param ExecContext Pointer to the exec context to dereference.
+
+ @param Deallocate If TRUE, the ExecContext memory should be freed on
+        dereference to zero.  If FALSE, the structure should be cleaned
+        up but the memory should remain allocated.
+ */
+VOID
+YoriShDereferenceExecContext(
+    __in PYORI_SH_SINGLE_EXEC_CONTEXT ExecContext,
+    __in BOOLEAN Deallocate
+    )
+{
+    ASSERT(ExecContext->ReferenceCount > 0);
+    if (InterlockedDecrement((LONG *)&ExecContext->ReferenceCount) == 0) {
+        YoriShFreeExecContext(ExecContext);
+        if (Deallocate) {
+            YoriLibFree(ExecContext);
+        }
+    }
+}
+
 
 /**
  Frees any internal allocations in a @ref YORI_SH_EXEC_PLAN .  Note it
@@ -1334,12 +1393,12 @@ YoriShFreeExecPlan(
 
     while (ExecContext != NULL) {
         NextExecContext = ExecContext->NextProgram;
-        YoriShFreeExecContext(ExecContext);
-        YoriLibFree(ExecContext);
+        ExecContext->NextProgram = NULL;
+        YoriShDereferenceExecContext(ExecContext, TRUE);
         ExecContext = NextExecContext;
     }
 
-    YoriShFreeExecContext(&ExecPlan->EntireCmd);
+    YoriShDereferenceExecContext(&ExecPlan->EntireCmd, FALSE);
 }
 
 /**
@@ -1398,6 +1457,7 @@ YoriShParseCmdContextToExecPlan(
         return FALSE;
     }
     ExecPlan->EntireCmd.WaitForCompletion = TRUE;
+    ExecPlan->EntireCmd.ReferenceCount = 1;
     ExecPlan->WaitForCompletion = TRUE;
 
     while (CurrentArg < CmdContext->ArgC) {
@@ -1413,6 +1473,7 @@ YoriShParseCmdContextToExecPlan(
 
         ArgsConsumed = YoriShParseCmdContextToExecContext(CmdContext, CurrentArg, ThisProgram, &LocalCurrentArgIsForProgram, &LocalCurrentArgIndex);
         if (ArgsConsumed == 0) {
+            YoriShDereferenceExecContext(ThisProgram, TRUE);
             YoriShFreeExecPlan(ExecPlan);
             return FALSE;
         }
@@ -1420,7 +1481,9 @@ YoriShParseCmdContextToExecPlan(
         if (CurrentArg + ArgsConsumed == (CmdContext->ArgC - 1)) {
             PYORI_STRING ThisArg;
             ThisArg = &CmdContext->ArgV[CurrentArg + ArgsConsumed];
-            if (ThisArg->StartOfString[0] == '&') {
+            if (!CmdContext->ArgContexts[CurrentArg + ArgsConsumed].Quoted &&
+                ThisArg->StartOfString[0] == '&') {
+
                 if (YoriLibCompareStringWithLiteral(ThisArg, _T("&")) == 0) {
                     ExecPlan->WaitForCompletion = FALSE;
                     ExecPlan->EntireCmd.WaitForCompletion = FALSE;
@@ -1491,6 +1554,8 @@ YoriShParseCmdContextToExecPlan(
                 *CurrentArgIsForProgram = LocalCurrentArgIsForProgram;
             }
         }
+
+        ThisProgram->ReferenceCount = 1;
 
         if (PreviousProgram != NULL) {
             PYORI_STRING ArgOfLastOperator;
